@@ -1,0 +1,46 @@
+{
+  "id": "medium",
+  "displayName": "중간",
+  "order": 2,
+  "description": "여유 RAM 6.5GB 이상, 4코어 이상 PC용",
+  "recommendedPlayers": "8~12",
+  "heapMb": 5120,
+  "jvmFlags": [
+    "-XX:+UseG1GC",
+    "-XX:+ParallelRefProcEnabled",
+    "-XX:MaxGCPauseMillis=200",
+    "-XX:+UnlockExperimentalVMOptions",
+    "-XX:+AlwaysPreTouch",
+    "-XX:+DisableExplicitGC",
+    "-XX:G1NewSizePercent=30",
+    "-XX:G1MaxNewSizePercent=40",
+    "-XX:G1HeapRegionSize=8M",
+    "-XX:G1ReservePercent=20",
+    "-XX:G1HeapWastePercent=5",
+    "-XX:G1MixedGCCountTarget=4",
+    "-XX:InitiatingHeapOccupancyPercent=15",
+    "-XX:G1MixedGCLiveThresholdPercent=90",
+    "-XX:SurvivorRatio=32",
+    "-XX:+PerfDisableSharedMem",
+    "-XX:MaxTenuringThreshold=1"
+  ],
+  "chunkPregeneration": "recommended",
+  "requiresAutoBackup": false,
+  "serverProperties": {
+    "view-distance": "8",
+    "simulation-distance": "6",
+    "entity-broadcast-range-percentage": "85",
+    "sync-chunk-writes": "true",
+    "network-compression-threshold": "256",
+    "max-players": "12"
+  },
+  "mods": [
+    "lithium",
+    "ferrite-core",
+    "modernfix",
+    "krypton",
+    "spark",
+    "chunky",
+    "c2me"
+  ]
+}

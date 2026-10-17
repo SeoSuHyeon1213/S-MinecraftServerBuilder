@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/Tests/">
+    <Project Path="Tests/Builder.Core.Tests/Builder.Core.Tests.csproj" />
+  </Folder>
+  <Project Path="Builder.Cli/Builder.Cli.csproj" />
+  <Project Path="Builder.Core/Builder.Core.csproj" />
+</Solution>

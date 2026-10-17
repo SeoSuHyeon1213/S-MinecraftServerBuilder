@@ -1,0 +1,7 @@
+bin/
+obj/
+.vs/
+*.user
+TestResults/
+# 로컬에서 시험 생성한 서버
+servers/

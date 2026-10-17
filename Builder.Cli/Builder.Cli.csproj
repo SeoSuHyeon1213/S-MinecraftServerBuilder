@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Builder.Cli</RootNamespace>
+    <AssemblyName>mchb</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Builder.Core\Builder.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\Presets\*.json" Link="Presets\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\Mods\*.json" Link="Mods\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

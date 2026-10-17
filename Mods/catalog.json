@@ -1,0 +1,58 @@
+[
+  {
+    "id": "lithium",
+    "name": "Lithium",
+    "description": "게임 로직(틱) 최적화",
+    "sources": {
+      "modrinth": "lithium"
+    }
+  },
+  {
+    "id": "ferrite-core",
+    "name": "FerriteCore",
+    "description": "메모리 사용량 감소",
+    "sources": {
+      "modrinth": "ferrite-core"
+    }
+  },
+  {
+    "id": "modernfix",
+    "name": "ModernFix",
+    "description": "시작 시간·메모리 개선",
+    "sources": {
+      "modrinth": "modernfix"
+    }
+  },
+  {
+    "id": "krypton",
+    "name": "Krypton",
+    "description": "네트워크 처리 최적화",
+    "sources": {
+      "modrinth": "krypton"
+    }
+  },
+  {
+    "id": "spark",
+    "name": "spark",
+    "description": "성능 프로파일러 (TPS·MSPT 측정)",
+    "sources": {
+      "modrinth": "spark"
+    }
+  },
+  {
+    "id": "chunky",
+    "name": "Chunky",
+    "description": "청크 사전 생성",
+    "sources": {
+      "modrinth": "chunky"
+    }
+  },
+  {
+    "id": "c2me",
+    "name": "C2ME",
+    "description": "청크 생성·로드 병렬화 (멀티코어 활용)",
+    "sources": {
+      "modrinth": "c2me-fabric"
+    }
+  }
+]

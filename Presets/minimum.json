@@ -1,0 +1,44 @@
+{
+  "id": "minimum",
+  "displayName": "최저",
+  "order": 4,
+  "description": "여유 RAM이 부족한 PC용 최소 설정. LAN 전용이면 server.network-compression-threshold=-1 권장",
+  "recommendedPlayers": "2~4",
+  "heapMb": 3072,
+  "jvmFlags": [
+    "-XX:+UseG1GC",
+    "-XX:+ParallelRefProcEnabled",
+    "-XX:MaxGCPauseMillis=100",
+    "-XX:+UnlockExperimentalVMOptions",
+    "-XX:+DisableExplicitGC",
+    "-XX:G1NewSizePercent=30",
+    "-XX:G1MaxNewSizePercent=40",
+    "-XX:G1HeapRegionSize=8M",
+    "-XX:G1ReservePercent=20",
+    "-XX:G1HeapWastePercent=5",
+    "-XX:G1MixedGCCountTarget=4",
+    "-XX:InitiatingHeapOccupancyPercent=15",
+    "-XX:G1MixedGCLiveThresholdPercent=90",
+    "-XX:SurvivorRatio=32",
+    "-XX:+PerfDisableSharedMem",
+    "-XX:MaxTenuringThreshold=1"
+  ],
+  "chunkPregeneration": "requiredWithWorldBorder",
+  "requiresAutoBackup": true,
+  "serverProperties": {
+    "view-distance": "4",
+    "simulation-distance": "3",
+    "entity-broadcast-range-percentage": "50",
+    "sync-chunk-writes": "false",
+    "network-compression-threshold": "512",
+    "max-players": "4"
+  },
+  "mods": [
+    "lithium",
+    "ferrite-core",
+    "modernfix",
+    "krypton",
+    "spark",
+    "chunky"
+  ]
+}

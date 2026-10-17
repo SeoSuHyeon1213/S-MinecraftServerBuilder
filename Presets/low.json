@@ -1,0 +1,44 @@
+{
+  "id": "low",
+  "displayName": "저",
+  "order": 3,
+  "description": "여유 RAM 5.5GB 이상 저사양 PC용. 청크 비동기 저장을 사용하므로 자동 백업 필요",
+  "recommendedPlayers": "4~8",
+  "heapMb": 4096,
+  "jvmFlags": [
+    "-XX:+UseG1GC",
+    "-XX:+ParallelRefProcEnabled",
+    "-XX:MaxGCPauseMillis=200",
+    "-XX:+UnlockExperimentalVMOptions",
+    "-XX:+DisableExplicitGC",
+    "-XX:G1NewSizePercent=30",
+    "-XX:G1MaxNewSizePercent=40",
+    "-XX:G1HeapRegionSize=8M",
+    "-XX:G1ReservePercent=20",
+    "-XX:G1HeapWastePercent=5",
+    "-XX:G1MixedGCCountTarget=4",
+    "-XX:InitiatingHeapOccupancyPercent=15",
+    "-XX:G1MixedGCLiveThresholdPercent=90",
+    "-XX:SurvivorRatio=32",
+    "-XX:+PerfDisableSharedMem",
+    "-XX:MaxTenuringThreshold=1"
+  ],
+  "chunkPregeneration": "required",
+  "requiresAutoBackup": true,
+  "serverProperties": {
+    "view-distance": "6",
+    "simulation-distance": "5",
+    "entity-broadcast-range-percentage": "70",
+    "sync-chunk-writes": "false",
+    "network-compression-threshold": "512",
+    "max-players": "8"
+  },
+  "mods": [
+    "lithium",
+    "ferrite-core",
+    "modernfix",
+    "krypton",
+    "spark",
+    "chunky"
+  ]
+}
