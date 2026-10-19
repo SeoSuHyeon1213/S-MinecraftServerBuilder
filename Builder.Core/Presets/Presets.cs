@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Builder.Core.Hardware;
 using Builder.Core.Http;
+using Builder.Core.Loaders;
 
 namespace Builder.Core.Presets;
 
@@ -164,4 +165,29 @@ public static class PresetRecommender
 
     /// <summary>실제 힙 설정(오버라이드 포함) 기준으로 서버가 쓰는 대략적인 RAM.</summary>
     public static double RequiredGbForHeap(int heapMb) => heapMb / 1024d + JvmOverheadGb;
+}
+
+/// <summary>
+/// 모드 수에 따른 대략적인 권장 힙. 실측값이 아니라 흔히 쓰는 어림값(로더 기본 + 모드당 64MB)이며,
+/// 경고 표시에만 쓰고 설정을 자동으로 바꾸지 않는다. 정확한 값은 spark(/spark heapsummary)로 확인한다.
+/// </summary>
+public static class ModdedHeapAdvisor
+{
+    public const int PerModMb = 64;
+
+    /// <summary>NeoForge는 시작 시 로드하는 라이브러리·이벤트 버스가 더 커서 기본값을 높게 잡는다.</summary>
+    public static int BaseMb(string loader) => loader == ModLoaders.NeoForge ? 2560 : 2048;
+
+    /// <summary>256MB 단위로 올림한 권장 힙(MB).</summary>
+    public static int RecommendedHeapMb(string loader, int modCount)
+    {
+        var mb = BaseMb(loader) + PerModMb * Math.Max(0, modCount);
+        return (mb + 255) / 256 * 256;
+    }
+
+    public static int CountModJars(string serverDir)
+    {
+        var modsDir = Path.Combine(serverDir, "mods");
+        return Directory.Exists(modsDir) ? Directory.EnumerateFiles(modsDir, "*.jar").Count() : 0;
+    }
 }

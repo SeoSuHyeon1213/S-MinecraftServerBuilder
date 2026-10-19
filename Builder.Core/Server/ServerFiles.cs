@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Builder.Core.Http;
+using Builder.Core.Loaders;
 using Builder.Core.Mods;
 using Builder.Core.Presets;
 
@@ -19,10 +20,18 @@ public sealed class ServerInstanceConfig
         Converters = { new LenientStringConverter() },
     };
 
-    public int SchemaVersion { get; init; } = 1;
+    /// <summary>2: loader 항목 추가 (없는 1 버전 파일은 Fabric으로 읽는다).</summary>
+    public const int CurrentSchemaVersion = 2;
+
+    public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public required string MinecraftVersion { get; init; }
-    public required string LoaderVersion { get; init; }
-    public required string InstallerVersion { get; init; }
+
+    /// <summary>모드 로더 ID (fabric / neoforge). <see cref="ModLoaders"/> 참조.</summary>
+    public string Loader { get; set; } = ModLoaders.Fabric;
+    public required string LoaderVersion { get; set; }
+
+    /// <summary>Fabric 인스톨러 버전. NeoForge 서버는 null.</summary>
+    public string? InstallerVersion { get; set; }
     public int JavaMajorVersion { get; init; }
     public string? JavaPath { get; set; }
     public string Preset { get; set; } = "low";
@@ -48,8 +57,18 @@ public sealed class ServerInstanceConfig
             ?? throw new InvalidDataException($"{FileName}을(를) 읽을 수 없습니다: {path}");
     }
 
-    public void Save(string serverDir) =>
+    public void Save(string serverDir)
+    {
+        SchemaVersion = CurrentSchemaVersion;
         File.WriteAllText(Path.Combine(serverDir, FileName), JsonSerializer.Serialize(this, Options) + "\n", new UTF8Encoding(false));
+    }
+
+    /// <summary>server.properties의 level-name 기준 월드 폴더.</summary>
+    public static string WorldDirectory(string serverDir)
+    {
+        var levelName = ServerPropertiesFile.Load(Path.Combine(serverDir, ServerPropertiesFile.FileName)).Get("level-name");
+        return Path.Combine(serverDir, string.IsNullOrWhiteSpace(levelName) ? "world" : levelName.Trim());
+    }
 }
 
 /// <summary>
@@ -138,19 +157,17 @@ public static class EulaFile
 
 public static class ServerLaunch
 {
-    public const string LauncherJar = "fabric-server-launch.jar";
-
-    /// <summary>-Xms = -Xmx (설계서 4장), 프리셋 JVM 플래그, Fabric 런처 실행.</summary>
-    public static IReadOnlyList<string> BuildArguments(ResolvedPreset preset) =>
+    /// <summary>-Xms = -Xmx (설계서 4장), 프리셋 JVM 플래그, 로더별 실행 대상(<see cref="IServerLoader.LaunchArguments"/>).</summary>
+    public static IReadOnlyList<string> BuildArguments(ResolvedPreset preset, IReadOnlyList<string> launchTarget) =>
     [
         $"-Xms{preset.HeapMb}M",
         $"-Xmx{preset.HeapMb}M",
         .. preset.JvmFlags,
-        "-jar", LauncherJar, "nogui",
+        .. launchTarget,
     ];
 
     /// <summary>프리셋을 server.properties와 실행 스크립트(start.bat / start.sh)에 반영한다.</summary>
-    public static void Apply(string serverDir, ResolvedPreset preset, string javaPath)
+    public static void Apply(string serverDir, ResolvedPreset preset, string javaPath, IServerLoader loader, string loaderVersion)
     {
         var propertiesPath = Path.Combine(serverDir, ServerPropertiesFile.FileName);
         var properties = ServerPropertiesFile.Load(propertiesPath);
@@ -158,12 +175,17 @@ public static class ServerLaunch
             properties.Set(key, value);
         properties.Save(propertiesPath);
 
-        WriteScripts(serverDir, javaPath, BuildArguments(preset));
+        // NeoForge는 OS별 인자 파일이 다르므로 스크립트마다 따로 만든다.
+        WriteScripts(serverDir, javaPath,
+            BuildArguments(preset, loader.LaunchArguments(loaderVersion, windows: true)),
+            BuildArguments(preset, loader.LaunchArguments(loaderVersion, windows: false)));
     }
 
-    private static void WriteScripts(string serverDir, string javaPath, IReadOnlyList<string> arguments)
+    private static void WriteScripts(
+        string serverDir, string javaPath, IReadOnlyList<string> windowsArguments, IReadOnlyList<string> unixArguments)
     {
-        var args = string.Join(' ', arguments);
+        var batArgs = string.Join(' ', windowsArguments);
+        var shArgs = string.Join(' ', unixArguments);
         var utf8 = new UTF8Encoding(false);
 
         File.WriteAllText(Path.Combine(serverDir, "start.bat"),
@@ -171,7 +193,7 @@ public static class ServerLaunch
             "rem MinecraftHybridBuilder가 생성한 파일입니다. 'mchb configure'를 실행하면 다시 생성됩니다.\r\n" +
             "chcp 65001 > nul\r\n" +
             "cd /d \"%~dp0\"\r\n" +
-            $"\"{javaPath}\" {args}\r\n" +
+            $"\"{javaPath}\" {batArgs}\r\n" +
             "pause\r\n", utf8);
 
         var shPath = Path.Combine(serverDir, "start.sh");
@@ -179,7 +201,7 @@ public static class ServerLaunch
             "#!/bin/sh\n" +
             "# MinecraftHybridBuilder가 생성한 파일입니다. 'mchb configure'를 실행하면 다시 생성됩니다.\n" +
             "cd \"$(dirname \"$0\")\" || exit 1\n" +
-            $"exec \"{javaPath}\" {args}\n", utf8);
+            $"exec \"{javaPath}\" {shArgs}\n", utf8);
 
         if (!OperatingSystem.IsWindows())
         {

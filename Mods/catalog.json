@@ -26,10 +26,13 @@
   {
     "id": "krypton",
     "name": "Krypton",
-    "description": "네트워크 처리 최적화",
+    "description": "네트워크 처리 최적화 (Fabric 전용)",
     "sources": {
       "modrinth": "krypton"
-    }
+    },
+    "loaders": [
+      "fabric"
+    ]
   },
   {
     "id": "spark",
@@ -50,9 +53,10 @@
   {
     "id": "c2me",
     "name": "C2ME",
-    "description": "청크 생성·로드 병렬화 (멀티코어 활용)",
+    "description": "청크 생성·로드 병렬화 (멀티코어 활용). NeoForge는 별도 포트 프로젝트 사용",
     "sources": {
-      "modrinth": "c2me-fabric"
+      "modrinth": "c2me-fabric",
+      "modrinth@neoforge": "c2me-neoforge"
     }
   }
 ]

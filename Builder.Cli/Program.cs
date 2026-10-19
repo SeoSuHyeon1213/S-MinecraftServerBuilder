@@ -4,6 +4,7 @@ using Builder.Core;
 using Builder.Core.Hardware;
 using Builder.Core.Http;
 using Builder.Core.Java;
+using Builder.Core.Loaders;
 using Builder.Core.Minecraft;
 using Builder.Core.Mods;
 using Builder.Core.Presets;
@@ -28,11 +29,13 @@ try
     {
         "hardware" or "detect" => await Hardware(paths, catalog),
         "presets" => Presets(catalog, modCatalog),
-        "versions" => await Versions(new FabricMetaClient(http), cli.Flag("all")),
+        "versions" => await Versions(new FabricMetaClient(http), new NeoForgeServerLoader(http, Console.WriteLine),
+            ModLoaders.Normalize(cli.Option("modloader") ?? ModLoaders.Fabric), cli.Flag("all")),
         "create" => await Create(cli, service, catalog, cts.Token),
         "configure" => await Configure(cli, service),
         "start" => await Start(cli, service),
-        "mods" => await Mods(cli, service, modCatalog),
+        "mods" => await Mods(cli, service, modCatalog, catalog),
+        "switch-loader" or "loader" => await SwitchLoader(cli, service),
         "help" => Help(),
         _ => throw new ArgumentException($"알 수 없는 명령: {cli.Command} ('help'로 목록 확인)"),
     };
@@ -47,15 +50,18 @@ catch (Exception ex) when (ex is ArgumentException or InvalidOperationException 
 static int Help()
 {
     Console.WriteLine("""
-        Minecraft Hybrid Server Builder (mchb) — 저사양 PC용 Fabric 서버 빌더
+        Minecraft Hybrid Server Builder (mchb) — 저사양 PC용 Fabric / NeoForge 서버 빌더
 
         명령:
           hardware                       하드웨어·Java 확인과 프리셋 추천
           presets                        경량화 프리셋 목록
-          versions [--all]               Fabric 지원 Minecraft 버전 (기본: 안정 버전 15개)
+          versions [--modloader <로더>] [--all]
+                                         로더가 지원하는 Minecraft 버전 (기본: Fabric, 안정 버전 15개)
           create <폴더> [옵션]            새 서버 생성
-              --mc <버전>                Minecraft 버전 (기본: 최신 안정 버전)
-              --loader <버전>            Fabric 로더 버전 (기본: 최신 안정 로더)
+              --modloader <로더>         fabric|neoforge 또는 페브릭|네오포지
+                                         (생략 시 대화형이면 선택 질문, 아니면 fabric)
+              --mc <버전>                Minecraft 버전 (기본: 해당 로더의 최신 안정 버전)
+              --loader <버전>            로더 버전 (기본: 최신 안정 버전. NeoForge 예: 26.3.0.90)
               --preset <이름>            normal|medium|low|minimum 또는 일반|중간|저|최저 (기본: 하드웨어 추천)
               --set <키=값>              오버라이드, 여러 번 사용 가능 (예: server.view-distance=8, jvm.heapMb=3584)
               --accept-eula              Minecraft EULA(https://aka.ms/MinecraftEULA) 동의
@@ -68,6 +74,10 @@ static int Help()
           mods <폴더> [--update] [--allow-unstable-mods[=false]]
                                          설치된 최적화 모드 확인. --update: Modrinth에서 최신 호환 버전으로 갱신
                                          (아직 버전이 없어 건너뛴 모드도 이때 다시 찾음)
+          switch-loader <폴더> <로더> [--loader <버전>] [--confirm]
+                                         같은 Minecraft 버전에서 Fabric ↔ NeoForge 전환
+                                         (빌더 모드는 새 로더용으로 재설치, 사용자 jar 중 이전 로더 전용은
+                                          mods-disabled/<로더>/ 로 옮김. 월드가 있으면 백업 후 --confirm 필요)
           start <폴더>                    서버 실행 (콘솔 명령 입력 가능, 종료는 'stop' 또는 Ctrl+C)
         """);
     return 0;
@@ -118,8 +128,16 @@ static int Presets(PresetCatalog catalog, ModCatalog modCatalog)
     return 0;
 }
 
-static async Task<int> Versions(FabricMetaClient fabric, bool all)
+static async Task<int> Versions(FabricMetaClient fabric, NeoForgeServerLoader neoForge, string loader, bool all)
 {
+    if (loader == ModLoaders.NeoForge)
+    {
+        var summary = NeoForgeVersions.Summarize(await neoForge.GetAllVersionsAsync());
+        foreach (var (game, build, stable) in all ? summary : summary.Where(v => v.Stable).Take(15).ToList())
+            Console.WriteLine($"{game,-10} NeoForge {build}{(stable ? "" : " (베타만 있음)")}");
+        return 0;
+    }
+
     var versions = await fabric.GetGameVersionsAsync();
     var shown = all ? versions : versions.Where(v => v.Stable).Take(15).ToList();
     foreach (var v in shown)
@@ -144,10 +162,11 @@ static async Task<int> Create(CommandLine cli, ServerService service, PresetCata
     }
     catalog.Get(presetId);
 
+    var modLoader = ModLoaders.Normalize(cli.Option("modloader") ?? AskModLoader());
     var eula = cli.Flag("accept-eula") || AskEula();
     var (config, modReport) = await service.CreateAsync(
         new CreateServerRequest(dir, cli.Option("mc"), cli.Option("loader"), presetId, overrides, eula,
-            !cli.Flag("no-java-download"), !cli.Flag("no-mods"), cli.Flag("allow-unstable-mods")),
+            !cli.Flag("no-java-download"), !cli.Flag("no-mods"), cli.Flag("allow-unstable-mods"), modLoader),
         new ConsoleProgress(), ct);
     if (modReport is not null)
         PrintModReport(modReport);
@@ -155,7 +174,7 @@ static async Task<int> Create(CommandLine cli, ServerService service, PresetCata
     var full = Path.GetFullPath(dir);
     Console.WriteLine();
     Console.WriteLine($"서버 생성 완료: {full}");
-    Console.WriteLine($"  Minecraft {config.MinecraftVersion}, Fabric 로더 {config.LoaderVersion}, 프리셋 {config.Preset}");
+    Console.WriteLine($"  Minecraft {config.MinecraftVersion}, {ModLoaders.DisplayName(config.Loader)} {config.LoaderVersion}, 프리셋 {config.Preset}");
     Console.WriteLine($"  실행: mchb start \"{full}\"  또는  {(OperatingSystem.IsWindows() ? "start.bat" : "./start.sh")}");
     Console.WriteLine("  첫 실행 시 Minecraft 서버 파일을 내려받고 월드를 생성하므로 시간이 걸립니다.");
     return 0;
@@ -168,7 +187,7 @@ static async Task<int> Configure(CommandLine cli, ServerService service)
         dir, cli.Option("preset"), cli.KeyValues("set"), cli.Options("unset").ToList(),
         !cli.Flag("no-java-download"), new ConsoleProgress());
 
-    Console.WriteLine($"설정 반영: 프리셋 {resolved.Source.DisplayName} ({config.Preset}), 힙 {resolved.HeapMb}MB");
+    Console.WriteLine($"설정 반영: {ModLoaders.DisplayName(config.Loader)} {config.LoaderVersion}, 프리셋 {resolved.Source.DisplayName} ({config.Preset}), 힙 {resolved.HeapMb}MB");
     foreach (var (key, value) in config.Overrides)
         Console.WriteLine($"  오버라이드 {key}={value}");
     if (modReport is not null)
@@ -191,7 +210,7 @@ static async Task<int> Start(CommandLine cli, ServerService service)
     return exitCode;
 }
 
-static async Task<int> Mods(CommandLine cli, ServerService service, ModCatalog modCatalog)
+static async Task<int> Mods(CommandLine cli, ServerService service, ModCatalog modCatalog, PresetCatalog catalog)
 {
     var dir = cli.RequirePositional(0, "서버 폴더");
     ServerInstanceConfig config;
@@ -207,12 +226,43 @@ static async Task<int> Mods(CommandLine cli, ServerService service, ModCatalog m
         config = ServerInstanceConfig.Load(Path.GetFullPath(dir));
     }
 
-    Console.WriteLine($"Minecraft {config.MinecraftVersion}, 프리셋 {config.Preset}, 자동 관리 {(config.ManageMods ? "켜짐" : "꺼짐")}, " +
+    Console.WriteLine($"Minecraft {config.MinecraftVersion}, {ModLoaders.DisplayName(config.Loader)} {config.LoaderVersion}, " +
+                      $"프리셋 {config.Preset}, 자동 관리 {(config.ManageMods ? "켜짐" : "꺼짐")}, " +
                       $"알파·베타 허용 {(config.AllowUnstableMods ? "예" : "아니요")}");
     if (config.Mods.Count == 0)
         Console.WriteLine("  빌더가 설치한 모드 없음");
     foreach (var mod in config.Mods)
         Console.WriteLine($"  {mod.Name,-16} {mod.VersionNumber,-28} {(mod.CatalogId is null ? "[의존성] " : "")}{mod.FileName}");
+
+    var full = Path.GetFullPath(dir);
+    var modCount = ModdedHeapAdvisor.CountModJars(full);
+    var heapMb = PresetResolver.Resolve(catalog.Get(config.Preset), config.Overrides).HeapMb;
+    var advisedMb = ModdedHeapAdvisor.RecommendedHeapMb(config.Loader, modCount);
+    Console.WriteLine($"mods 폴더 jar {modCount}개 (사용자 모드 포함), 현재 힙 {heapMb}MB, 대략적인 권장 힙 {advisedMb}MB" +
+                      (heapMb < advisedMb ? $" → 'configure --set {PresetResolver.HeapKey}={advisedMb}' 권장" : ""));
+    return 0;
+}
+
+static async Task<int> SwitchLoader(CommandLine cli, ServerService service)
+{
+    var dir = cli.RequirePositional(0, "서버 폴더");
+    var target = cli.Positional.Count > 1 ? cli.Positional[1]
+        : cli.Option("modloader") ?? throw new ArgumentException("바꿀 로더를 지정하세요 (fabric 또는 neoforge).");
+
+    var report = await service.SwitchLoaderAsync(dir, target, cli.Option("loader"), cli.Flag("confirm"),
+        !cli.Flag("no-java-download"), new ConsoleProgress());
+
+    Console.WriteLine();
+    Console.WriteLine($"로더 전환 완료: {ModLoaders.DisplayName(report.FromLoader)} → {ModLoaders.DisplayName(report.ToLoader)} {report.LoaderVersion}");
+    foreach (var name in report.RemovedManagedMods)
+        Console.WriteLine($"  [제거] {name} (이전 로더용 빌더 모드)");
+    foreach (var name in report.DisabledUserMods)
+        Console.WriteLine($"  [보관] {name} → {UserModShelf.DisabledDirName}/{report.FromLoader}/");
+    foreach (var name in report.RestoredUserMods)
+        Console.WriteLine($"  [복원] {name}");
+    if (report.Mods is not null)
+        PrintModReport(report.Mods);
+    Console.WriteLine("새 로더용 모드는 mods 폴더에 직접 넣으세요. 이전 로더로 돌아가면 보관한 jar는 자동으로 되돌아옵니다.");
     return 0;
 }
 
@@ -229,6 +279,18 @@ static void PrintModReport(ModSyncReport report)
         foreach (var change in changes)
             Console.WriteLine($"  [{label}] {change.Name} — {change.Detail}");
     }
+}
+
+/// <summary>대화형 콘솔이면 로더를 묻는다. 입력이 리디렉션된 경우(스크립트)에는 Fabric.</summary>
+static string AskModLoader()
+{
+    if (Console.IsInputRedirected)
+        return ModLoaders.Fabric;
+    Console.Write("모드 로더를 고르세요 — 1) Fabric (기본, 가벼움)  2) NeoForge : ");
+    var answer = Console.ReadLine()?.Trim();
+    return answer is "2" ? ModLoaders.NeoForge
+        : string.IsNullOrEmpty(answer) || answer == "1" ? ModLoaders.Fabric
+        : answer;
 }
 
 static bool AskEula()

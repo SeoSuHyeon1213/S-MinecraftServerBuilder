@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Builder.Core.Http;
+using Builder.Core.Loaders;
 using Builder.Core.Server;
 
 namespace Builder.Core.Mods;
@@ -11,6 +12,17 @@ public sealed class ModCatalogEntry
     public required string Name { get; init; }
     public string Description { get; init; } = "";
     public Dictionary<string, string> Sources { get; init; } = [];
+
+    /// <summary>지원하는 모드 로더 (fabric, neoforge). 비어 있으면 모든 로더.</summary>
+    public List<string> Loaders { get; init; } = [];
+
+    public bool Supports(string loader) => Loaders.Count == 0 || Loaders.Contains(loader, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>로더별로 프로젝트가 다른 모드는 "소스@로더" 키를 먼저 찾는다 (예: "modrinth@neoforge": "c2me-neoforge").</summary>
+    public string? ProjectIdFor(string source, string loader) =>
+        Sources.TryGetValue($"{source}@{loader}", out var specific) ? specific
+        : Sources.TryGetValue(source, out var common) ? common
+        : null;
 }
 
 public sealed class ModCatalog(IEnumerable<ModCatalogEntry> entries)
@@ -40,6 +52,7 @@ public sealed record InstalledMod
     public required string VersionNumber { get; init; }
     public required string FileName { get; init; }
     public required FileHash Hash { get; init; }
+    /// <summary>jar의 모드 ID (Fabric 또는 NeoForge). 이름은 이전 builder.json과의 호환을 위해 유지한다.</summary>
     public string? FabricModId { get; init; }
 
     internal string Key => $"{Source}:{ProjectId}";
@@ -65,7 +78,7 @@ public sealed class ModSyncReport
 public sealed class ModInstaller(HttpClient http, ModCatalog catalog, IReadOnlyList<IModSource> sources, Action<string> log)
 {
     public const string ModsDirName = "mods";
-    public const string FabricLoader = "fabric";
+    public const string FabricLoader = ModLoaders.Fabric;
     private const string StagingDirName = ".mchb-staging";
 
     /// <param name="update">false면 이미 설치된 모드는 조회 없이 유지하고, 없는 모드만 새로 찾는다. true면 모두 최신 호환 버전으로 다시 확인한다.</param>
@@ -81,8 +94,7 @@ public sealed class ModInstaller(HttpClient http, ModCatalog catalog, IReadOnlyL
         var managedFiles = managed.Select(m => m.FileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var userModIds = Directory.EnumerateFiles(modsDir, "*.jar")
             .Where(f => !managedFiles.Contains(Path.GetFileName(f)))
-            .Select(FabricModMetadata.ReadModId)
-            .OfType<string>()
+            .SelectMany(f => ModMetadata.Read(f).ModIds)
             .ToHashSet(StringComparer.Ordinal);
 
         var wanted = modIds.Select(id => catalog.Get(id).Id).Distinct(StringComparer.Ordinal).ToList();
@@ -140,10 +152,13 @@ public sealed class ModInstaller(HttpClient http, ModCatalog catalog, IReadOnlyL
         ModCatalogEntry entry, ServerInstanceConfig config, IReadOnlyList<InstalledMod> managed, bool update,
         Dictionary<string, PlannedMod> planned, CancellationToken ct)
     {
+        if (!entry.Supports(config.Loader))
+            return $"{ModLoaders.DisplayName(config.Loader)}용 버전이 없는 모드 (카탈로그 loaders: {string.Join(", ", entry.Loaders)})";
+
         string? lastFailure = null;
         foreach (var source in sources)
         {
-            if (!entry.Sources.TryGetValue(source.Name, out var projectId))
+            if (entry.ProjectIdFor(source.Name, config.Loader) is not { } projectId)
                 continue;
 
             var (root, failure) = await LookupAsync(source, projectId, config, ct);
@@ -193,12 +208,13 @@ public sealed class ModInstaller(HttpClient http, ModCatalog catalog, IReadOnlyL
     {
         try
         {
-            var result = await source.FindLatestAsync(projectId, config.MinecraftVersion, FabricLoader, config.AllowUnstableMods, ct);
+            var result = await source.FindLatestAsync(projectId, config.MinecraftVersion, config.Loader, config.AllowUnstableMods, ct);
             if (result.Release is not null)
                 return (result.Release, null);
+            var target = $"Minecraft {config.MinecraftVersion} {ModLoaders.DisplayName(config.Loader)}";
             return (null, result.OnlyUnstableAvailable
-                ? $"Minecraft {config.MinecraftVersion}용은 알파·베타 버전만 있음 (--allow-unstable-mods로 설치 가능)"
-                : $"Minecraft {config.MinecraftVersion}용 버전이 아직 없음");
+                ? $"{target}용은 알파·베타 버전만 있음 (--allow-unstable-mods로 설치 가능)"
+                : $"{target}용 버전이 아직 없음");
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or JsonException or TaskCanceledException)
         {
@@ -239,11 +255,13 @@ public sealed class ModInstaller(HttpClient http, ModCatalog catalog, IReadOnlyL
             return Skip($"다운로드 실패: {ex.Message}");
         }
 
-        var fabricId = FabricModMetadata.ReadModId(staged);
-        if (fabricId is not null && userModIds.Contains(fabricId))
-            return Skip($"사용자가 직접 넣은 같은 모드({fabricId})가 있어 그것을 사용");
+        var jarIds = ModMetadata.Read(staged).ModIds;
+        var duplicate = jarIds.FirstOrDefault(userModIds.Contains);
+        if (duplicate is not null)
+            return Skip($"사용자가 직접 넣은 같은 모드({duplicate})가 있어 그것을 사용");
+        var fabricId = jarIds.FirstOrDefault();
 
-        // 의존성은 카탈로그 이름이 없으므로 jar의 Fabric 모드 ID(예: fabric-api)를 이름으로 쓴다.
+        // 의존성은 카탈로그 이름이 없으므로 jar의 모드 ID(예: fabric-api)를 이름으로 쓴다.
         var name = plan.CatalogId is null && fabricId is not null ? fabricId : plan.Name;
 
         if (existing is not null)
@@ -282,4 +300,52 @@ public sealed class ModInstaller(HttpClient http, ModCatalog catalog, IReadOnlyL
     private static string Key(ModRelease release) => $"{release.Source}:{release.ProjectId}";
 
     private sealed record PlannedMod(ModRelease Release, string? CatalogId, string Name);
+}
+
+/// <summary>
+/// 로더를 바꿀 때 사용자가 직접 넣은 다른 로더 전용 jar를 mods-disabled/&lt;로더&gt;/ 로 옮겨 두고,
+/// 다시 그 로더로 돌아오면 원래 자리로 되돌린다. 파일을 지우지 않으므로 언제든 복구할 수 있다.
+/// </summary>
+public static class UserModShelf
+{
+    public const string DisabledDirName = "mods-disabled";
+
+    /// <returns>옮겨 둔 파일과 되돌린 파일 이름 목록.</returns>
+    public static (List<string> Disabled, List<string> Restored) Swap(string serverDir, string fromLoader, string toLoader)
+    {
+        var modsDir = Path.Combine(serverDir, ModInstaller.ModsDirName);
+        Directory.CreateDirectory(modsDir);
+        var disabled = new List<string>();
+        var restored = new List<string>();
+
+        var shelf = Path.Combine(serverDir, DisabledDirName, fromLoader);
+        foreach (var jar in Directory.EnumerateFiles(modsDir, "*.jar").ToList())
+        {
+            // 메타데이터가 없는 jar(라이브러리 등)와 두 로더를 모두 지원하는 jar는 그대로 둔다.
+            if (!ModMetadata.Read(jar).IsForOtherLoaderThan(toLoader))
+                continue;
+
+            Directory.CreateDirectory(shelf);
+            var name = Path.GetFileName(jar);
+            var target = Path.Combine(shelf, name);
+            if (File.Exists(target))
+                target = Path.Combine(shelf, $"{Path.GetFileNameWithoutExtension(name)}-{DateTime.Now:yyyyMMddHHmmss}.jar");
+            File.Move(jar, target);
+            disabled.Add(name);
+        }
+
+        var back = Path.Combine(serverDir, DisabledDirName, toLoader);
+        if (Directory.Exists(back))
+        {
+            foreach (var jar in Directory.EnumerateFiles(back, "*.jar").ToList())
+            {
+                var target = Path.Combine(modsDir, Path.GetFileName(jar));
+                if (File.Exists(target))
+                    continue;
+                File.Move(jar, target);
+                restored.Add(Path.GetFileName(jar));
+            }
+        }
+        return (disabled, restored);
+    }
 }

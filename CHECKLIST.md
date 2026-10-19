@@ -16,7 +16,7 @@
 
 ## 현재 상태
 - 진행 단계: 1차 단계 완료, 작업 2(Modrinth 모드 자동 설치) 완료 — 아래 "작업 2" 섹션 참조
-- 다음 할 일: Chunky 청크 사전 생성, 자동 백업(low/minimum 강제)
+- 다음 할 일: 작업 3(NeoForge 지원) Windows 빌드·테스트·실서버 검증 → Chunky 청크 사전 생성, 자동 백업(low/minimum 강제)
 - 차단 원인: 없음
 
 ## 1. 사전 확인
@@ -126,3 +126,44 @@
 - [ ] C2ME 스레드 수 제한 (설계서 4장: 중간 단계) — C2ME 설정 파일 연동
 - [ ] 클라이언트 전용 모드 차단 (Modrinth `server_side` 확인) — 3차 모드 관리자에서 사용자 모드 검색 시 필요
 - [ ] CurseForge 소스 (추후 확장, 설계서 6장)
+
+---
+
+# 작업 3 — NeoForge 지원과 로더 전환 (2026-10-19)
+
+## 목표와 범위
+- 목표: 서버 생성 시 Fabric/NeoForge를 고를 수 있고, 기존 서버를 Fabric ↔ NeoForge로 전환할 수 있게 한다. 모드 50개 안팎 운용을 위해 모드 수 기반 힙 경고를 추가한다.
+- 작업 대상: `Builder.Core/Loaders/`(신규), `Server/`, `Mods/`, `Presets/Presets.cs`, `Builder.Cli`, `Mods/catalog.json`, 테스트, 문서
+
+## 실행
+- [x] `IServerLoader` 규격 + `FabricServerLoader`(기존 동작 이동) + `NeoForgeServerLoader`(maven 메타데이터, 인스톨러 `--install-server`, OS별 인자 파일 실행)
+- [x] NeoForge 버전 규칙 `NeoForgeVersions` (1.X.Y → X.Y.빌드, 26.N[.P] → 26.N.P.빌드, `-beta` 불안정)
+- [x] `builder.json` 스키마 2: `loader` 추가, `installerVersion` 선택 항목 (스키마 1은 Fabric으로 읽음)
+- [x] start.bat / start.sh를 OS별 인자로 따로 생성 (NeoForge win_args / unix_args)
+- [x] 모드 메타데이터: fabric.mod.json + neoforge.mods.toml/mods.toml의 `[[mods]]` modId (의존성 modId 제외)
+- [x] 카탈로그 `loaders`(Krypton=Fabric 전용), `modrinth@neoforge`(C2ME → c2me-neoforge)
+- [x] `switch-loader` 명령: 설치 → 빌더 모드 삭제 → 사용자 jar 보관/복원(`mods-disabled/<로더>/`) → 스크립트 재생성 → 모드 재설치. 월드가 있으면 `--confirm` 필수
+- [x] `create --modloader`, 대화형 로더 선택, `versions --modloader neoforge`
+- [x] 모드 수 기반 권장 힙 경고 (`ModdedHeapAdvisor`, start·mods 출력)
+- [x] 단위 테스트 추가 (`LoaderTests.cs`, CoreTests 3개)
+
+## 검증 기록
+| 확인 항목 | 명령 또는 방법 | 결과 | 미실행·실패 이유 |
+|---|---|---|---|
+| NeoForge 버전 체계 | maven-metadata.xml 확인 (최신 26.3.0.90, 21.1.262, 26.1.2.122) | 확인 | |
+| 빌드 | `dotnet build MinecraftHybridBuilder.slnx` | 미실행 | 작업 환경(Linux VM·클라우드)에 .NET SDK가 없고 설치 차단됨 → Windows에서 실행 필요 |
+| 단위 테스트 | `dotnet test MinecraftHybridBuilder.slnx` | 미실행 | 위와 같음 |
+| NeoForge 실제 생성·기동 | `mchb create servers/neo --modloader neoforge --preset minimum --accept-eula` 후 start | 미실행 | 위와 같음 |
+| 로더 전환 | Fabric 서버에 `switch-loader ... neoforge --confirm` → 다시 fabric | 미실행 | 위와 같음 |
+
+## 주요 결정
+- 결정: 로더 전환은 같은 Minecraft 버전 안에서만 한다. 이유: 버전까지 바꾸면 월드 업그레이드가 겹쳐 되돌리기 어려움.
+- 결정: 사용자 jar는 삭제하지 않고 `mods-disabled/<로더>/`로 옮긴다. 이유: AGENTS.md "사용자 jar 보호" 규칙, 전환을 되돌릴 수 있게 함.
+- 결정: 권장 힙은 어림값(로더 기본 2048/2560MB + 모드당 64MB)으로 경고만 한다. 이유: 실측 근거가 없으므로 설정을 자동으로 바꾸지 않음. spark로 실측 후 조정 예정.
+- 결정: 프리셋 힙 값(설계서 4장)은 바꾸지 않았다.
+
+## 남은 작업
+- [ ] Windows에서 빌드·테스트 실행, 실패 시 수정
+- [ ] NeoForge 서버 실제 생성·기동, 인스톨러가 `libraries/net/neoforged/neoforge/<버전>/win_args.txt`를 만드는지 확인
+- [ ] 모드 50개 구성으로 spark 실측 후 권장 힙 어림값 보정
+- [ ] (선택) CurseForge 소스 — 50개 모드 중 Modrinth에 없는 모드 대응

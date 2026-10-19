@@ -130,6 +130,7 @@ MinecraftHybridBuilder/
 ### 외부 연동
 
 - **Fabric Meta API:** 게임·로더·인스톨러 버전 조회 및 서버 런처 jar 다운로드
+- **NeoForge Maven (maven.neoforged.net):** `maven-metadata.xml`로 버전 조회(1.X.Y → X.Y.빌드, 26.N[.P] → 26.N.P.빌드), 인스톨러 `--install-server`로 설치, `@libraries/net/neoforged/neoforge/<버전>/win_args.txt|unix_args.txt`로 실행. 로더는 `IServerLoader`로 추상화하며 `switch-loader`로 같은 Minecraft 버전 안에서 Fabric ↔ NeoForge 전환을 지원한다 (2026-10-19 추가)
 - **Modrinth API (기본 모드 소스):** 모드 검색, 버전 호환성, 의존성 확인. API 키 불필요, SHA-512 해시 제공
 - **CurseForge API (추후 확장):** 아래 "모드 소스 구조"에 맞춰 필요할 때 추가한다.
 - **Adoptium API:** Java 런타임 미설치 시 다운로드. 필요한 Java 버전은 Mojang 버전 메타데이터(`javaVersion.majorVersion`)에서 읽는다 (2026-10 기준 최신 26.3은 Java 25 필요)

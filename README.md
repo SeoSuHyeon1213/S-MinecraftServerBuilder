@@ -1,6 +1,6 @@
 # S-MinecraftServerBuilder
 
-저사양 PC에서도 Minecraft Java Edition **Fabric** 서버를 쉽게 만들고 운영하도록 돕는 명령줄 도구입니다.
+저사양 PC에서도 Minecraft Java Edition **Fabric** 또는 **NeoForge** 서버를 쉽게 만들고 운영하도록 돕는 명령줄 도구입니다.
 PC 사양에 맞는 경량화 프리셋을 고르고, 필요한 Java·Fabric·최적화 모드를 자동으로 설치합니다.
 
 > 개발 중인 프로젝트입니다. 현재 Windows 11에서 확인했고, Linux는 아직 검증하지 않았습니다.
@@ -9,7 +9,9 @@ PC 사양에 맞는 경량화 프리셋을 고르고, 필요한 Java·Fabric·�
 
 - **사양 측정과 프리셋 추천**: 전체 RAM과 CPU를 기준으로 4단계 프리셋(일반·중간·저·최저) 중 하나를 추천합니다. RAM이 부족하면 얼마를 더 확보해야 하는지 알려 줍니다.
 - **Java 자동 설치**: Minecraft 버전에 필요한 Java 버전을 확인하고, 없으면 Eclipse Temurin JRE를 내려받습니다.
-- **Fabric 서버 자동 설치**: 최신 안정 버전 또는 지정한 버전으로 서버를 만듭니다.
+- **Fabric / NeoForge 서버 자동 설치**: 서버를 만들 때 로더를 고르고(`--modloader`), 최신 안정 버전 또는 지정한 버전으로 설치합니다.
+- **로더 전환**: 이미 만든 서버를 `switch-loader`로 Fabric ↔ NeoForge 전환할 수 있습니다. 빌더 최적화 모드는 새 로더용으로 다시 설치되고, 사용자가 넣은 이전 로더 전용 jar는 `mods-disabled/<로더>/`로 옮겨 두었다가 다시 돌아오면 복원됩니다.
+- **모드 수에 따른 메모리 경고**: `start`·`mods` 실행 시 mods 폴더의 jar 수로 대략적인 권장 힙을 계산해, 현재 힙이 작으면 알려 줍니다.
 - **설정 자동 구성**: 프리셋에 맞게 `server.properties`, JVM 메모리·GC 옵션, 시작 스크립트(`start.bat`, `start.sh`)를 만듭니다.
 - **최적화 모드 자동 설치**: [Modrinth](https://modrinth.com)에서 서버 버전에 맞는 모드와 필수 의존성을 설치합니다. 맞는 버전이 없는 모드는 건너뛰고 이유를 알려 줍니다. 사용자가 직접 넣은 모드는 건드리지 않습니다.
 
@@ -26,8 +28,14 @@ PC 사양에 맞는 경량화 프리셋을 고르고, 필요한 Java·Fabric·�
 # 사양 확인과 프리셋 추천
 dotnet run --project Builder.Cli -- hardware
 
-# 서버 만들기 (프리셋을 생략하면 추천 프리셋 사용)
+# 서버 만들기 (프리셋을 생략하면 추천 프리셋 사용, 로더를 생략하면 실행 중에 물어봄)
 dotnet run --project Builder.Cli -- create servers/my-server --preset 저 --accept-eula
+
+# NeoForge 서버 만들기
+dotnet run --project Builder.Cli -- create servers/neo --modloader neoforge --preset 저 --accept-eula
+
+# 기존 Fabric 서버를 NeoForge로 전환 (월드가 있으면 백업 후 --confirm)
+dotnet run --project Builder.Cli -- switch-loader servers/my-server neoforge --confirm
 
 # 서버 실행
 dotnet run --project Builder.Cli -- start servers/my-server
@@ -41,8 +49,9 @@ dotnet run --project Builder.Cli -- start servers/my-server
 |---|---|
 | `hardware` | 사양·Java 확인, 프리셋 추천 |
 | `presets` | 프리셋 목록과 설정값 |
-| `versions` | 설치 가능한 Minecraft 버전 |
-| `create <폴더>` | 새 서버 만들기 (`--mc`, `--preset`, `--set 키=값`, `--no-mods` 등) |
+| `versions` | 설치 가능한 Minecraft 버전 (`--modloader neoforge`로 NeoForge 목록) |
+| `create <폴더>` | 새 서버 만들기 (`--modloader`, `--mc`, `--preset`, `--set 키=값`, `--no-mods` 등) |
+| `switch-loader <폴더> <로더>` | Fabric ↔ NeoForge 전환 (`--loader <버전>`, `--confirm`) |
 | `configure <폴더>` | 프리셋·설정 변경 (예: `--preset 중간 --set server.view-distance=8`) |
 | `mods <폴더>` | 설치된 모드 확인, `--update`로 최신 호환 버전으로 갱신 |
 | `start <폴더>` | 서버 실행 |
@@ -61,12 +70,14 @@ dotnet run --project Builder.Cli -- start servers/my-server
 
 기본 묶음: Lithium, FerriteCore, ModernFix, Krypton, spark, Chunky
 
+NeoForge에서는 Krypton(Fabric 전용)을 건너뛰고, C2ME는 NeoForge 포트(`c2me-neoforge`)를 사용합니다. 모드 50개 안팎을 넣을 계획이면 `jvm.heapMb`를 권장 힙(대략 Fabric 2GB / NeoForge 2.5GB + 모드당 64MB) 이상으로 올리세요.
+
 `--set`으로 프리셋 값을 개별적으로 바꿀 수 있습니다 (예: `--set jvm.heapMb=3584`).
 
 ## 프로젝트 구조
 
 ```
-Builder.Core/   핵심 기능 (사양 측정, 프리셋, Java·Fabric 설치, 모드 설치)
+Builder.Core/   핵심 기능 (사양 측정, 프리셋, Java 설치, 로더(Fabric·NeoForge) 설치, 모드 설치)
 Builder.Cli/    명령줄 도구
 Presets/        프리셋 정의 (JSON)
 Mods/           최적화 모드 목록 (JSON)
@@ -79,6 +90,7 @@ Tests/          단위 테스트 (dotnet test)
 
 - [x] 서버 빌더 CLI (Java·Fabric 자동 설치, 설정 자동화)
 - [x] 경량화 프리셋, Modrinth 최적화 모드 자동 설치
+- [x] NeoForge 지원, Fabric ↔ NeoForge 전환
 - [ ] Chunky 청크 사전 생성, 자동 백업
 - [ ] 서버 상태 수집 모드(FabricBridge), RCON 연동
 - [ ] 웹 대시보드

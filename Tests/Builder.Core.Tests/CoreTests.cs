@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Builder.Core.Hardware;
 using Builder.Core.Java;
+using Builder.Core.Loaders;
 using Builder.Core.Minecraft;
 using Builder.Core.Presets;
 using Builder.Core.Server;
@@ -100,10 +101,12 @@ public class PresetTests
     [Fact]
     public void LaunchArgumentsUseEqualMinAndMaxHeap()
     {
-        var args = ServerLaunch.BuildArguments(PresetResolver.Resolve(Catalog().Get("minimum"), null));
+        var fabric = new FabricServerLoader(new HttpClient());
+        var args = ServerLaunch.BuildArguments(PresetResolver.Resolve(Catalog().Get("minimum"), null),
+            fabric.LaunchArguments("0.19.5", windows: true));
         Assert.Equal("-Xms3072M", args[0]);
         Assert.Equal("-Xmx3072M", args[1]);
-        Assert.Equal(["-jar", ServerLaunch.LauncherJar, "nogui"], args.TakeLast(3));
+        Assert.Equal(["-jar", FabricServerLoader.LauncherJar, "nogui"], args.TakeLast(3));
     }
 
     private const long Gb = 1024L * 1024 * 1024;
@@ -220,13 +223,52 @@ public class ServerFileTests : IDisposable
         var catalog = PresetCatalog.LoadFromDirectory(Path.Combine(AppContext.BaseDirectory, "Presets"));
         File.WriteAllLines(Path.Combine(dir, ServerPropertiesFile.FileName), ["motd=keep", "view-distance=12"]);
 
-        ServerLaunch.Apply(dir, PresetResolver.Resolve(catalog.Get("low"), null), @"C:\Java\bin\java.exe");
+        ServerLaunch.Apply(dir, PresetResolver.Resolve(catalog.Get("low"), null), @"C:\Java\bin\java.exe",
+            new FabricServerLoader(new HttpClient()), "0.19.5");
 
         var props = ServerPropertiesFile.Load(Path.Combine(dir, ServerPropertiesFile.FileName));
         Assert.Equal("keep", props.Get("motd"));
         Assert.Equal("6", props.Get("view-distance"));
         Assert.Contains("\"C:\\Java\\bin\\java.exe\" -Xms4096M -Xmx4096M", File.ReadAllText(Path.Combine(dir, "start.bat")));
         Assert.Contains("-jar fabric-server-launch.jar nogui", File.ReadAllText(Path.Combine(dir, "start.sh")));
+    }
+
+    [Fact]
+    public void NeoForgeScriptsUseOsSpecificArgumentFiles()
+    {
+        var catalog = PresetCatalog.LoadFromDirectory(Path.Combine(AppContext.BaseDirectory, "Presets"));
+        ServerLaunch.Apply(dir, PresetResolver.Resolve(catalog.Get("low"), null), "/opt/java/bin/java",
+            new NeoForgeServerLoader(new HttpClient(), _ => { }), "26.3.0.90");
+
+        Assert.Contains("-Xmx4096M -XX:+UseG1GC", File.ReadAllText(Path.Combine(dir, "start.bat")));
+        Assert.Contains("@libraries/net/neoforged/neoforge/26.3.0.90/win_args.txt nogui", File.ReadAllText(Path.Combine(dir, "start.bat")));
+        Assert.Contains("@libraries/net/neoforged/neoforge/26.3.0.90/unix_args.txt nogui", File.ReadAllText(Path.Combine(dir, "start.sh")));
+    }
+
+    [Fact]
+    public void OldBuilderJsonWithoutLoaderIsFabric()
+    {
+        File.WriteAllText(Path.Combine(dir, ServerInstanceConfig.FileName), """
+            { "schemaVersion": 1, "minecraftVersion": "26.3", "loaderVersion": "0.19.5", "installerVersion": "1.1.2",
+              "javaMajorVersion": 25, "preset": "low" }
+            """);
+        var config = ServerInstanceConfig.Load(dir);
+        Assert.Equal(ModLoaders.Fabric, config.Loader);
+
+        config.Save(dir);
+        var saved = File.ReadAllText(Path.Combine(dir, ServerInstanceConfig.FileName));
+        Assert.Contains("\"loader\": \"fabric\"", saved);
+        Assert.Contains("\"schemaVersion\": 2", saved);
+    }
+
+    [Theory]
+    [InlineData(null, "world")]
+    [InlineData("level-name=survival", "survival")]
+    public void WorldDirectoryFollowsLevelName(string? line, string expected)
+    {
+        if (line is not null)
+            File.WriteAllLines(Path.Combine(dir, ServerPropertiesFile.FileName), [line]);
+        Assert.Equal(Path.Combine(dir, expected), ServerInstanceConfig.WorldDirectory(dir));
     }
 }
 

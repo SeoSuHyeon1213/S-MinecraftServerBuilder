@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Text.Json;
 using Builder.Core.Http;
+using Builder.Core.Loaders;
 
 namespace Builder.Core.Mods;
 
@@ -121,6 +122,96 @@ public sealed class ModrinthSource(HttpClient http) : IModSource
     private sealed record FileDto(Dictionary<string, string> Hashes, string Url, string Filename, bool Primary);
 
     private sealed record DependencyDto(string? ProjectId, string? DependencyType);
+}
+
+/// <summary>jar에 들어 있는 모드 정보. 어느 로더용인지와 모드 ID 목록.</summary>
+public sealed record ModJarInfo(IReadOnlySet<string> Loaders, IReadOnlyList<string> ModIds)
+{
+    public static ModJarInfo Empty { get; } = new(new HashSet<string>(), []);
+
+    /// <summary>모드 메타데이터가 있지만 해당 로더용 정보는 없는 jar (다른 로더 전용 모드).</summary>
+    public bool IsForOtherLoaderThan(string loader) => Loaders.Count > 0 && !Loaders.Contains(loader);
+}
+
+/// <summary>
+/// jar 안의 메타데이터에서 로더와 모드 ID를 읽는다. 출처와 관계없이 같은 모드인지 판별하는 기준이다.
+/// - Fabric: fabric.mod.json의 id
+/// - NeoForge: META-INF/neoforge.mods.toml (1.20.5 이후) 또는 META-INF/mods.toml (그 이전)의 modId
+/// </summary>
+public static partial class ModMetadata
+{
+    private const string FabricJson = "fabric.mod.json";
+    private static readonly string[] NeoForgeTomls = ["META-INF/neoforge.mods.toml", "META-INF/mods.toml"];
+
+    public static ModJarInfo Read(string jarPath)
+    {
+        try
+        {
+            using var zip = ZipFile.OpenRead(jarPath);
+            var loaders = new HashSet<string>(StringComparer.Ordinal);
+            var ids = new List<string>();
+
+            if (zip.GetEntry(FabricJson) is { } fabric)
+            {
+                loaders.Add(ModLoaders.Fabric);
+                if (ReadFabricId(fabric) is { } id)
+                    ids.Add(id);
+            }
+
+            foreach (var name in NeoForgeTomls)
+            {
+                if (zip.GetEntry(name) is not { } toml)
+                    continue;
+                loaders.Add(ModLoaders.NeoForge);
+                using var reader = new StreamReader(toml.Open());
+                ids.AddRange(ReadTomlModIds(reader.ReadToEnd()));
+                break;
+            }
+
+            return new ModJarInfo(loaders, ids.Distinct(StringComparer.Ordinal).ToList());
+        }
+        catch (Exception ex) when (ex is InvalidDataException or JsonException or IOException or UnauthorizedAccessException)
+        {
+            return ModJarInfo.Empty;
+        }
+    }
+
+    private static string? ReadFabricId(ZipArchiveEntry entry)
+    {
+        using var stream = entry.Open();
+        using var document = JsonDocument.Parse(stream, new JsonDocumentOptions
+        {
+            AllowTrailingCommas = true,
+            CommentHandling = JsonCommentHandling.Skip,
+        });
+        return document.RootElement.TryGetProperty("id", out var id) ? id.GetString() : null;
+    }
+
+    /// <summary>
+    /// mods.toml에서 [[mods]] 표의 modId만 읽는다. [[dependencies.*]] 표의 modId(minecraft, neoforge 등)는 의존 대상이므로 제외한다.
+    /// TOML 전체를 해석하지 않고 줄 단위로 처리한다.
+    /// </summary>
+    public static IEnumerable<string> ReadTomlModIds(string toml)
+    {
+        var inMods = false;
+        foreach (var raw in toml.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.StartsWith('['))
+            {
+                inMods = line.Split('#')[0].Replace(" ", "").TrimEnd() == "[[mods]]";
+                continue;
+            }
+            if (!inMods)
+                continue;
+            var match = ModIdPattern().Match(line);
+            if (match.Success)
+                yield return match.Groups[1].Value;
+        }
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex("""^modId\s*=\s*["']([^"']+)["']""")]
+    private static partial System.Text.RegularExpressions.Regex ModIdPattern();
 }
 
 public static class FabricModMetadata
