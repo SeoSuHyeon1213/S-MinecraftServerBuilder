@@ -9,6 +9,7 @@ using Builder.Core.Minecraft;
 using Builder.Core.Mods;
 using Builder.Core.Presets;
 using Builder.Core.Server;
+using Builder.Storage;
 using Builder.Storage.Collection;
 
 Console.OutputEncoding = Encoding.UTF8;
@@ -37,6 +38,7 @@ try
         "start" => await Start(cli, service),
         "mods" => await Mods(cli, service, modCatalog, catalog),
         "switch-loader" or "loader" => await SwitchLoader(cli, service),
+        "stats" => Stats(cli, catalog),
         "help" => Help(),
         _ => throw new ArgumentException($"알 수 없는 명령: {cli.Command} ('help'로 목록 확인)"),
     };
@@ -83,6 +85,10 @@ static int Help()
                                          실행 중 RCON으로 TPS·MSPT·접속자, 프로세스 메모리·CPU를
                                          builder-data/metrics.db에 기록 (주기는 프리셋별, --set metrics.intervalSeconds=초,
                                          0이면 끔. --no-metrics는 이번 실행만 끔)
+          stats <폴더> [--since <기간>] [--recent <개수>] [--events <개수>]
+                                         수집한 지표 요약: TPS, MSPT 평균·95백분위, 메모리, CPU, 접속자, 성능 판정
+                                         (--since 기본 1h, 예: 30m, 6h, 2d. 원본 샘플은 48시간 보관
+                                          --recent 최근 샘플 표 기본 5, --events 최근 이벤트 기본 10, 0이면 생략)
         """);
     return 0;
 }
@@ -275,6 +281,119 @@ static async Task<int> SwitchLoader(CommandLine cli, ServerService service)
     Console.WriteLine("새 로더용 모드는 mods 폴더에 직접 넣으세요. 이전 로더로 돌아가면 보관한 jar는 자동으로 되돌아옵니다.");
     return 0;
 }
+
+static int Stats(CommandLine cli, PresetCatalog catalog)
+{
+    var dir = Path.GetFullPath(cli.RequirePositional(0, "서버 폴더"));
+    var dbPath = MetricsStore.PathFor(dir);
+    if (!File.Exists(dbPath))
+    {
+        Console.WriteLine($"아직 수집된 지표가 없습니다: {dbPath}");
+        Console.WriteLine("  'mchb start'로 서버를 실행하면 프리셋 주기마다 기록됩니다.");
+        return 0;
+    }
+
+    var period = MetricsReporting.ParseDuration(cli.Option("since") ?? "1h");
+    var recent = NonNegativeInt(cli.Option("recent"), 5, "--recent");
+    var events = NonNegativeInt(cli.Option("events"), 10, "--events");
+    var report = MetricsReporting.Build(MetricsStore.Open(dbPath), DateTimeOffset.UtcNow, period, recent, events);
+    var s = report.Summary;
+
+    Console.WriteLine($"지표 DB : {report.DatabasePath}");
+    Console.WriteLine($"상태    : {StateText(report)}");
+    Console.WriteLine($"구간    : 최근 {DurationText(period)} ({Local(report.From, period)} ~ {Local(report.To, period)}), 샘플 {s.SampleCount}개");
+    if (report.RangeExceedsRawRetention)
+        Console.WriteLine($"          원본 샘플은 최근 {RetentionPolicy.Default.RawSamples.TotalHours:0}시간만 보관하므로 그 이전은 요약에 포함되지 않습니다.");
+
+    if (s.SampleCount == 0)
+    {
+        Console.WriteLine("  이 구간에 기록된 샘플이 없습니다. --since를 늘려 보세요.");
+    }
+    else
+    {
+        Console.WriteLine($"TPS     : 평균 {Num(s.TpsAvg, "0.00")} / 최저 {Num(s.TpsMin, "0.00")}");
+        Console.WriteLine($"MSPT    : 평균 {Num(s.MsptAvg, "0.0", "ms")} / 95백분위 {Num(s.MsptP95, "0.0", "ms")} (목표 {MetricsReporting.MsptBudgetMs:0}ms 이하)");
+        Console.WriteLine($"메모리  : 프로세스 최대 {Num(s.RssMaxMb, "0", "MB")}" +
+                          (s.HeapUsedMaxMb is null ? "" : $", 힙 사용 최대 {s.HeapUsedMaxMb}MB"));
+        Console.WriteLine($"CPU     : 평균 {Num(s.CpuAvg, "0.0", "%")} (전체 코어 대비)");
+        Console.WriteLine($"접속자  : 최대 {Num(s.PlayersMax, "0", "명")}");
+        Console.WriteLine($"판정    : {VerdictText(report.Verdict, dir, catalog)}");
+    }
+
+    if (report.Recent.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("최근 샘플:");
+        Console.WriteLine("  시각                  TPS    MSPT   P95     RSS     CPU  접속");
+        foreach (var r in report.Recent)
+            Console.WriteLine($"  {r.Timestamp.ToLocalTime():yyyy-MM-dd HH:mm:ss}  {Num(r.Tps, "0.0"),5}  {Num(r.MsptAvg, "0.0"),5}  {Num(r.MsptP95, "0.0"),5}  " +
+                              $"{Num(r.RssMb, "0", "MB"),7}  {Num(r.CpuPercent, "0.0", "%"),6}  {Num(r.Players, "0"),3}");
+    }
+
+    if (report.Events.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("최근 이벤트:");
+        foreach (var e in report.Events)
+            Console.WriteLine($"  {e.Timestamp.ToLocalTime():yyyy-MM-dd HH:mm:ss}  {e.Type,-13} {e.Payload}");
+    }
+    return 0;
+
+    static string StateText(MetricsReport report)
+    {
+        var age = report.Latest is null ? "" : $"마지막 기록 {DurationText(report.To - report.Latest.Timestamp)} 전";
+        return report.State switch
+        {
+            ServerRunState.Running => $"실행 중 ({age})",
+            ServerRunState.Stopped => $"종료됨{(age == "" ? "" : $" ({age})")}",
+            ServerRunState.Interrupted => $"기록 끊김 — 종료 기록 없이 멈췄습니다 ({age}). 빌더가 강제 종료되었을 수 있습니다.",
+            _ => age == "" ? "알 수 없음" : $"알 수 없음 ({age})",
+        };
+    }
+
+    static string VerdictText(PerformanceVerdict verdict, string dir, PresetCatalog catalog)
+    {
+        if (!verdict.EnoughData)
+            return $"판정하기에 MSPT 샘플이 부족합니다 (최소 {MetricsReporting.MinimumSamples}개, RCON 연결 필요)";
+        if (verdict.Healthy)
+            return "양호 — 목표(20 TPS, 틱당 50ms 이하)를 지키고 있습니다";
+
+        var problems = new List<string>();
+        if (verdict.MsptOverBudget)
+            problems.Add($"MSPT 95백분위가 {MetricsReporting.MsptBudgetMs:0}ms를 넘습니다");
+        if (verdict.TpsBelowTarget)
+            problems.Add($"평균 TPS가 {MetricsReporting.TpsTarget}보다 낮습니다");
+        var text = "주의 — " + string.Join(", ", problems);
+
+        // 설계서 4장 5번: 한 단계 낮은 프리셋을 제안만 하고 자동으로 바꾸지 않는다.
+        if (ServerInstanceConfig.Exists(dir))
+        {
+            var current = catalog.Get(ServerInstanceConfig.Load(dir).Preset);
+            var lower = catalog.All.FirstOrDefault(p => p.Order > current.Order);
+            text += lower is null
+                ? $". 이미 가장 낮은 프리셋({current.DisplayName})입니다. 모드 수·시야 거리·접속자 수를 줄여 보세요."
+                : $". 한 단계 낮은 프리셋을 고려하세요: mchb configure \"{dir}\" --preset {lower.Id} ({current.DisplayName} → {lower.DisplayName})";
+        }
+        return text;
+    }
+
+    static string Num<T>(T? value, string format, string unit = "") where T : struct, IFormattable =>
+        value is { } v ? v.ToString(format, null) + unit : "-";
+
+    static string Local(DateTimeOffset t, TimeSpan period) =>
+        t.ToLocalTime().ToString(period >= TimeSpan.FromDays(1) ? "yyyy-MM-dd HH:mm" : "HH:mm:ss");
+
+    static int NonNegativeInt(string? text, int fallback, string name) =>
+        text is null ? fallback
+        : int.TryParse(text, out var n) && n >= 0 ? n
+        : throw new ArgumentException($"{name} 값은 0 이상의 정수여야 합니다: {text}");
+}
+
+static string DurationText(TimeSpan t) =>
+    t.TotalSeconds < 90 ? $"{Math.Max(0, t.TotalSeconds):0}초"
+    : t.TotalMinutes < 90 ? $"{t.TotalMinutes:0}분"
+    : t.TotalHours < 48 ? $"{t.TotalHours:0.#}시간"
+    : $"{t.TotalDays:0.#}일";
 
 static void PrintModReport(ModSyncReport report)
 {

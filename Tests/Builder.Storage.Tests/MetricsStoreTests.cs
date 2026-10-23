@@ -125,7 +125,7 @@ public class MetricsStoreTests : StoreTestBase
     public void SummaryOfEmptyRangeHasNoValues()
     {
         var s = OpenStore().Summarize(T0, T0.AddMinutes(1));
-        Assert.Equal(new MetricsSummary(0, null, null, null, null, null, null), s);
+        Assert.Equal(MetricsSummary.Empty, s);
     }
 
     [Theory]

@@ -38,7 +38,12 @@ public sealed record MetricsSummary(
     double? MsptAvg,
     double? MsptP95,
     long? HeapUsedMaxMb,
-    int? PlayersMax);
+    int? PlayersMax,
+    long? RssMaxMb,
+    double? CpuAvg)
+{
+    public static MetricsSummary Empty { get; } = new(0, null, null, null, null, null, null, null, null);
+}
 
 /// <summary>
 /// 보존 기간. 원본 샘플은 짧게, 1분 집계는 길게 두어 저사양 PC의 디스크 사용량을 제한한다.

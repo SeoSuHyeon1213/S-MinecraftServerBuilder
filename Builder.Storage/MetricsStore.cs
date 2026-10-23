@@ -204,7 +204,7 @@ public sealed class MetricsStore
         (string, object)[] range = [("$from", from.ToUnixTimeMilliseconds()), ("$to", to.ToUnixTimeMilliseconds())];
 
         using var cmd = Command(conn, """
-            SELECT COUNT(*), AVG(tps), MIN(tps), AVG(mspt_avg), MAX(heap_used_mb), MAX(players)
+            SELECT COUNT(*), AVG(tps), MIN(tps), AVG(mspt_avg), MAX(heap_used_mb), MAX(players), MAX(rss_mb), AVG(cpu_pct)
             FROM samples WHERE ts >= $from AND ts < $to;
             """, null, range);
         using var reader = cmd.ExecuteReader();
@@ -215,6 +215,8 @@ public sealed class MetricsStore
         var msptAvg = NullableDouble(reader, 3);
         var heapMax = NullableLong(reader, 4);
         var playersMax = reader.IsDBNull(5) ? (int?)null : reader.GetInt32(5);
+        var rssMax = NullableLong(reader, 6);
+        var cpuAvg = NullableDouble(reader, 7);
 
         var mspt = new List<double>();
         using (var msptCmd = Command(conn,
@@ -226,7 +228,7 @@ public sealed class MetricsStore
                 mspt.Add(msptReader.GetDouble(0));
         }
 
-        return new MetricsSummary(count, tpsAvg, tpsMin, msptAvg, Percentile(mspt, 0.95), heapMax, playersMax);
+        return new MetricsSummary(count, tpsAvg, tpsMin, msptAvg, Percentile(mspt, 0.95), heapMax, playersMax, rssMax, cpuAvg);
     }
 
     /// <summary>최근 원본 샘플을 오래된 순으로 돌려준다.</summary>
@@ -290,6 +292,25 @@ public sealed class MetricsStore
             list.Add(new ServerEvent(DateTimeOffset.FromUnixTimeMilliseconds(r.GetInt64(0)), r.GetString(1),
                 r.IsDBNull(2) ? null : r.GetString(2)));
         return list;
+    }
+
+    /// <summary>가장 최근 샘플. 없으면 null.</summary>
+    public MetricSample? LatestSample() => RecentSamples(1).FirstOrDefault();
+
+    /// <summary>주어진 종류 중 가장 최근 이벤트. 없으면 null.</summary>
+    public ServerEvent? LatestEvent(params string[] types)
+    {
+        if (types.Length == 0)
+            return null;
+        using var conn = Connect();
+        var names = types.Select((_, i) => $"$t{i}").ToArray();
+        using var cmd = Command(conn,
+            $"SELECT ts, type, payload FROM events WHERE type IN ({string.Join(", ", names)}) ORDER BY ts DESC, rowid DESC LIMIT 1;",
+            null, types.Select((t, i) => (names[i], (object)t)).ToArray());
+        using var r = cmd.ExecuteReader();
+        return r.Read()
+            ? new ServerEvent(DateTimeOffset.FromUnixTimeMilliseconds(r.GetInt64(0)), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2))
+            : null;
     }
 
     /// <summary>정렬된 값에서 최근접 순위(nearest-rank) 방식으로 백분위를 구한다.</summary>

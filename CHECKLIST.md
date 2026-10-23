@@ -17,7 +17,7 @@
 ## 현재 상태
 - 진행 단계: 1차 단계 완료, 작업 2(Modrinth 모드 자동 설치) 완료 — 아래 "작업 2" 섹션 참조
 - 다음 할 일: 작업 3(NeoForge 지원) Windows 빌드·테스트·실서버 검증 → Chunky 청크 사전 생성, 자동 백업(low/minimum 강제)
-- 병행 작업: 작업 4(SQLite 지표 저장, `feature/sqlite-metrics` 브랜치) 2단계까지 완료, 다음은 3단계 `mchb stats` — 아래 "작업 4" 섹션 참조
+- 병행 작업: 작업 4(SQLite 지표 저장, `feature/sqlite-metrics` 브랜치) 1~3단계 완료, main 병합 검토 대기 — 아래 "작업 4" 섹션 참조
 - 차단 원인: 없음
 
 ## 1. 사전 확인
@@ -191,7 +191,9 @@
   - `ServerService.RunAsync`에 모니터 훅 추가 (서버 종료 시 취소, 예외는 로그만), `mchb start --no-metrics`
   - `MetricsCollector`: `/tick query` → 실패 시 `/spark tps`, `/list`로 접속자·접속/퇴장 이벤트, `server-start`/`server-stop` 이벤트, RCON 대기·재접속·비밀번호 오류 시 프로세스 지표만 기록
   - 실서버에서 찾은 버그 수정: 명령과 확인용 패킷을 연달아 보내면 Minecraft가 연결을 끊음 → 패킷을 하나씩 보내고, 응답 조각이 4096바이트로 꽉 찬 경우에만 확인용 패킷 사용. 가짜 RCON 서버도 같은 제약을 흉내 내도록 변경
-- [ ] 3단계: `mchb stats <폴더>` 명령 (최근 TPS·MSPT p95·메모리 요약)
+- [x] 3단계: `mchb stats <폴더> [--since] [--recent] [--events]` — 구간 요약(TPS 평균·최저, MSPT 평균·95백분위, RSS 최대, CPU 평균, 접속자 최대), 실행 상태(실행 중/종료/기록 끊김), 성능 판정(설계서 1장 목표, 4장 5번: p95 MSPT > 50ms면 한 단계 낮은 프리셋 제안만), 최근 샘플·이벤트
+  - 계산은 `Builder.Storage/MetricsReport.cs`(테스트 가능), 출력은 CLI. DB가 없으면 만들지 않고 안내만 함
+  - README에 지표 기록·RCON 포트 노출 주의 안내 추가
 
 ## 검증 기록
 | 확인 항목 | 명령 또는 방법 | 결과 | 미실행·실패 이유 |
@@ -202,6 +204,8 @@
 | 빌드·테스트 (2단계) | `dotnet build` / `dotnet test MinecraftHybridBuilder.slnx` 3회 반복 | 통과 (경고 0, Core 98/98, Storage 35/35) | |
 | 실서버 1차 | `mchb create servers/e2e --preset minimum --set jvm.heapMb=1536 --set metrics.intervalSeconds=5 --accept-eula`(사용자 EULA 동의) 후 `start` 150초 | 실패: RCON 연결이 명령마다 끊김 (샘플 31개 중 TPS 13개). `/tick query`·`/list` 파싱과 프로세스 지표는 정상 | 원인: 패킷 연달아 전송 → 위 수정 |
 | 실서버 2차 | 수정 후 같은 서버 `start` 100초 | 통과: RCON 연결 1개 유지, 샘플 21개 중 TPS·접속자 18개(시작 중 3개 제외), 평균 MSPT 0.75ms, RSS 최대 1133MB, server-start/stop 이벤트 기록, 서버 콘솔에 수집 명령 출력 없음 | |
+| 빌드·테스트 (3단계) | `dotnet build` / `dotnet test MinecraftHybridBuilder.slnx` 2회 | 통과 (경고 0, Core 98/98, Storage 49/49) | |
+| `stats` 출력 | 임시 폴더에 합성 DB(30초 간격 80개, MSPT 30→75ms) 후 `mchb stats`, `--since 5d`, `--since abc`, DB 없는 폴더 | 통과: 요약·판정(저 → 최저 제안)·최근 샘플·이벤트 표시, 48시간 초과 안내, 잘못된 기간은 종료 코드 1, DB 없으면 만들지 않고 안내 | 실서버 DB로는 미확인 (새 서버 생성에 EULA 동의 필요) |
 | 4096바이트 넘는 응답 | 실서버 | 미실행 | 수집 명령 응답이 짧아 해당 없음. 가짜 서버로만 확인 |
 | 접속·퇴장 이벤트 | 실제 클라이언트 접속 | 미실행 | 클라이언트 없음. 단위 테스트로만 확인 |
 | spark 대체 경로 | `/tick query` 없는 구버전 서버 | 미실행 | 26.3에서는 `/tick query`가 동작해 사용되지 않음. 단위 테스트로만 확인 |
@@ -216,7 +220,8 @@
 - 결정: 호출마다 연결을 새로 연다 (연결 풀 사용). 이유: SqliteConnection은 스레드 안전하지 않고, WAL에서는 연결별 동시 조회·기록이 가능함.
 
 ## 남은 작업
-- [ ] 3단계 (위 실행 목록)
-- [ ] RCON은 `server-ip`가 비어 있으면 모든 네트워크 주소에서 열린다 (Minecraft 동작). 공유기 포트 포워딩 시 RCON 포트는 열지 않도록 README에 안내 필요
+- [ ] 서버 실행 중 `stats`를 다른 터미널에서 실행해 실서버 DB로 확인
+- [ ] 1분 집계(`samples_1m`)를 쓰는 장기 추이 표시 (48시간 넘는 구간) — 웹 대시보드 단계에서 검토
+- [ ] 힙 사용량: RCON으로는 얻을 수 없음 → FabricBridge 단계
 - [ ] 서버 종료 직전 RCON이 먼저 닫혀 "연결이 끊겼습니다" 로그가 한 줄 나옴 (무해, 필요하면 정리)
 - [ ] 서버 백업 기능을 만들 때 `builder-data/`의 포함 여부 결정 (WAL 파일이 있으면 백업 API 또는 체크포인트 후 복사)
