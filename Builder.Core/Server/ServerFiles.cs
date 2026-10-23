@@ -4,6 +4,7 @@ using Builder.Core.Http;
 using Builder.Core.Loaders;
 using Builder.Core.Mods;
 using Builder.Core.Presets;
+using Builder.Core.Rcon;
 
 namespace Builder.Core.Server;
 
@@ -173,6 +174,9 @@ public static class ServerLaunch
         var properties = ServerPropertiesFile.Load(propertiesPath);
         foreach (var (key, value) in preset.ServerProperties)
             properties.Set(key, value);
+        // 지표 수집이 꺼져 있어도 사용자가 켠 RCON은 끄지 않는다.
+        if (preset.MetricsEnabled)
+            RconSettings.EnsureEnabled(properties);
         properties.Save(propertiesPath);
 
         // NeoForge는 OS별 인자 파일이 다르므로 스크립트마다 따로 만든다.

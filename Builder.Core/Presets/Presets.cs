@@ -25,6 +25,9 @@ public sealed class PresetDefinition
 
     /// <summary>sync-chunk-writes=false 단계에서는 자동 백업을 강제한다 (설계서 4장 안전 장치).</summary>
     public bool RequiresAutoBackup { get; init; }
+
+    /// <summary>지표 수집 주기(초). 0이면 수집하지 않는다 (설계서 4장 "백그라운드 작업").</summary>
+    public int MetricsIntervalSeconds { get; init; } = 30;
 }
 
 public sealed class PresetCatalog
@@ -67,18 +70,24 @@ public sealed record ResolvedPreset(
     PresetDefinition Source,
     int HeapMb,
     IReadOnlyList<string> JvmFlags,
-    IReadOnlyDictionary<string, string> ServerProperties);
+    IReadOnlyDictionary<string, string> ServerProperties,
+    int MetricsIntervalSeconds)
+{
+    public bool MetricsEnabled => MetricsIntervalSeconds > 0;
+}
 
 public static class PresetResolver
 {
     public const string ServerPrefix = "server.";
     public const string HeapKey = "jvm.heapMb";
     public const int MinimumHeapMb = 1024;
+    public const string MetricsIntervalKey = "metrics.intervalSeconds";
 
     public static ResolvedPreset Resolve(PresetDefinition preset, IReadOnlyDictionary<string, string>? overrides)
     {
         var properties = new Dictionary<string, string>(preset.ServerProperties, StringComparer.Ordinal);
         var heapMb = preset.HeapMb;
+        var metricsInterval = preset.MetricsIntervalSeconds;
 
         foreach (var (key, value) in overrides ?? new Dictionary<string, string>())
         {
@@ -87,6 +96,11 @@ public static class PresetResolver
             {
                 properties[key[ServerPrefix.Length..]] = value;
             }
+            else if (key == MetricsIntervalKey)
+            {
+                if (!int.TryParse(value, out metricsInterval) || metricsInterval < 0)
+                    throw new ArgumentException($"{MetricsIntervalKey} 값은 0(수집 끔) 이상의 정수(초)여야 합니다: {value}");
+            }
             else
             {
                 if (!int.TryParse(value, out heapMb) || heapMb < MinimumHeapMb)
@@ -94,7 +108,7 @@ public static class PresetResolver
             }
         }
 
-        return new ResolvedPreset(preset, heapMb, preset.JvmFlags, properties);
+        return new ResolvedPreset(preset, heapMb, preset.JvmFlags, properties, metricsInterval);
     }
 
     /// <summary>오버라이드 키 형식을 확인한다. 다운로드 전에 오류를 알리기 위해 따로 호출할 수 있다.</summary>
@@ -102,9 +116,9 @@ public static class PresetResolver
     {
         if (key.StartsWith(ServerPrefix, StringComparison.Ordinal) && key.Length > ServerPrefix.Length)
             return;
-        if (key == HeapKey)
+        if (key is HeapKey or MetricsIntervalKey)
             return;
-        throw new ArgumentException($"지원하지 않는 오버라이드 키: {key} (사용 가능: server.<속성 이름>, {HeapKey})");
+        throw new ArgumentException($"지원하지 않는 오버라이드 키: {key} (사용 가능: server.<속성 이름>, {HeapKey}, {MetricsIntervalKey})");
     }
 }
 

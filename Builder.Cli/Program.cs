@@ -9,6 +9,7 @@ using Builder.Core.Minecraft;
 using Builder.Core.Mods;
 using Builder.Core.Presets;
 using Builder.Core.Server;
+using Builder.Storage.Collection;
 
 Console.OutputEncoding = Encoding.UTF8;
 
@@ -78,7 +79,10 @@ static int Help()
                                          같은 Minecraft 버전에서 Fabric ↔ NeoForge 전환
                                          (빌더 모드는 새 로더용으로 재설치, 사용자 jar 중 이전 로더 전용은
                                           mods-disabled/<로더>/ 로 옮김. 월드가 있으면 백업 후 --confirm 필요)
-          start <폴더>                    서버 실행 (콘솔 명령 입력 가능, 종료는 'stop' 또는 Ctrl+C)
+          start <폴더> [--no-metrics]     서버 실행 (콘솔 명령 입력 가능, 종료는 'stop' 또는 Ctrl+C)
+                                         실행 중 RCON으로 TPS·MSPT·접속자, 프로세스 메모리·CPU를
+                                         builder-data/metrics.db에 기록 (주기는 프리셋별, --set metrics.intervalSeconds=초,
+                                         0이면 끔. --no-metrics는 이번 실행만 끔)
         """);
     return 0;
 }
@@ -205,7 +209,13 @@ static async Task<int> Start(CommandLine cli, ServerService service)
         e.Cancel = true;
         Console.WriteLine("종료 신호를 받았습니다. 서버가 월드를 저장하고 종료할 때까지 기다립니다...");
     };
-    var exitCode = await service.RunAsync(dir, !cli.Flag("no-java-download"));
+    // 수집기는 서버와 같은 콘솔에 출력하므로 상태가 바뀔 때만 한 줄씩 남긴다.
+    Func<ServerRunContext, CancellationToken, Task>? monitor = cli.Flag("no-metrics")
+        ? null
+        : (context, token) => context.Preset.MetricsEnabled
+            ? MetricsCollector.MonitorAsync(context, line => Console.WriteLine($"[mchb] {line}"), token)
+            : Task.CompletedTask;
+    var exitCode = await service.RunAsync(dir, !cli.Flag("no-java-download"), monitor);
     Console.WriteLine($"서버 종료 (코드 {exitCode})");
     return exitCode;
 }

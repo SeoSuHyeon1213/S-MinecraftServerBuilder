@@ -235,7 +235,7 @@ public sealed class MetricsStore
         using var conn = Connect();
         using var cmd = Command(conn, """
             SELECT ts, tps, mspt_avg, mspt_p95, heap_used_mb, rss_mb, cpu_pct, players
-            FROM (SELECT * FROM samples ORDER BY ts DESC LIMIT $limit) ORDER BY ts;
+            FROM (SELECT rowid AS id, * FROM samples ORDER BY ts DESC, rowid DESC LIMIT $limit) ORDER BY ts, id;
             """, null, ("$limit", limit));
         using var r = cmd.ExecuteReader();
         var list = new List<MetricSample>();

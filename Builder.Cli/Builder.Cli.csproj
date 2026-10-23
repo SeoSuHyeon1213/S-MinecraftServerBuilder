@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Builder.Core\Builder.Core.csproj" />
+    <ProjectReference Include="..\Builder.Storage\Builder.Storage.csproj" />
   </ItemGroup>
 
   <ItemGroup>

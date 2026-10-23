@@ -7,7 +7,7 @@ namespace Builder.Cli;
 public sealed class CommandLine
 {
     private static readonly HashSet<string> Flags =
-        ["accept-eula", "no-java-download", "all", "help", "no-mods", "allow-unstable-mods", "update", "confirm"];
+        ["accept-eula", "no-java-download", "all", "help", "no-mods", "allow-unstable-mods", "update", "confirm", "no-metrics"];
 
     private readonly Dictionary<string, List<string>> options = new(StringComparer.OrdinalIgnoreCase);
 

@@ -17,7 +17,7 @@
 ## 현재 상태
 - 진행 단계: 1차 단계 완료, 작업 2(Modrinth 모드 자동 설치) 완료 — 아래 "작업 2" 섹션 참조
 - 다음 할 일: 작업 3(NeoForge 지원) Windows 빌드·테스트·실서버 검증 → Chunky 청크 사전 생성, 자동 백업(low/minimum 강제)
-- 병행 작업: 작업 4(SQLite 지표 저장, `feature/sqlite-metrics` 브랜치) — 아래 "작업 4" 섹션 참조
+- 병행 작업: 작업 4(SQLite 지표 저장, `feature/sqlite-metrics` 브랜치) 2단계까지 완료, 다음은 3단계 `mchb stats` — 아래 "작업 4" 섹션 참조
 - 차단 원인: 없음
 
 ## 1. 사전 확인
@@ -187,7 +187,10 @@
 - [x] `MetricsWriter`: 샘플은 용량 제한 큐(가득 차면 오래된 것부터 버림, 버린 수 집계), 이벤트는 버리지 않는 큐, 주기 기록·주기 정리, 기록 실패 시 로그만 남기고 계속 동작, Dispose 시 남은 데이터 기록
 - [x] 단위 테스트 20개 (`Tests/Builder.Storage.Tests`)
 - [x] AGENTS.md(디렉터리·의존성·DB 위치·스키마 규칙), 설계서 3·6장, README 갱신
-- [ ] 2단계: RCON 클라이언트, `enable-rcon` 자동 구성(비밀번호는 builder.json 밖), 프리셋별 수집 주기(설계서 4장 "백그라운드 작업" 행), Java 프로세스 메모리·CPU 수집
+- [x] 2단계: RCON 클라이언트(`Builder.Core/Rcon/`), `enable-rcon` 자동 구성(비밀번호는 server.properties에만, `broadcast-rcon-to-ops=false`), 프리셋별 수집 주기(`metricsIntervalSeconds` 1/5/30/60초, 오버라이드 `metrics.intervalSeconds`, 0이면 끔), Java 프로세스 메모리·CPU 수집
+  - `ServerService.RunAsync`에 모니터 훅 추가 (서버 종료 시 취소, 예외는 로그만), `mchb start --no-metrics`
+  - `MetricsCollector`: `/tick query` → 실패 시 `/spark tps`, `/list`로 접속자·접속/퇴장 이벤트, `server-start`/`server-stop` 이벤트, RCON 대기·재접속·비밀번호 오류 시 프로세스 지표만 기록
+  - 실서버에서 찾은 버그 수정: 명령과 확인용 패킷을 연달아 보내면 Minecraft가 연결을 끊음 → 패킷을 하나씩 보내고, 응답 조각이 4096바이트로 꽉 찬 경우에만 확인용 패킷 사용. 가짜 RCON 서버도 같은 제약을 흉내 내도록 변경
 - [ ] 3단계: `mchb stats <폴더>` 명령 (최근 TPS·MSPT p95·메모리 요약)
 
 ## 검증 기록
@@ -196,15 +199,24 @@
 | 빌드 | `dotnet build MinecraftHybridBuilder.slnx` (Windows 11, .NET SDK 10.0.401) | 통과 (경고 0, 오류 0) | |
 | 단위 테스트 | `dotnet test MinecraftHybridBuilder.slnx` | 통과 (Core 79/79, Storage 20/20) | |
 | 타이머 테스트 안정성 | `dotnet test Tests/Builder.Storage.Tests --no-build` 5회 반복 | 5회 모두 통과 | |
-| 실서버 지표 기록 | RCON 수집 → DB | 미실행 | 2단계 수집기 미구현 |
+| 빌드·테스트 (2단계) | `dotnet build` / `dotnet test MinecraftHybridBuilder.slnx` 3회 반복 | 통과 (경고 0, Core 98/98, Storage 35/35) | |
+| 실서버 1차 | `mchb create servers/e2e --preset minimum --set jvm.heapMb=1536 --set metrics.intervalSeconds=5 --accept-eula`(사용자 EULA 동의) 후 `start` 150초 | 실패: RCON 연결이 명령마다 끊김 (샘플 31개 중 TPS 13개). `/tick query`·`/list` 파싱과 프로세스 지표는 정상 | 원인: 패킷 연달아 전송 → 위 수정 |
+| 실서버 2차 | 수정 후 같은 서버 `start` 100초 | 통과: RCON 연결 1개 유지, 샘플 21개 중 TPS·접속자 18개(시작 중 3개 제외), 평균 MSPT 0.75ms, RSS 최대 1133MB, server-start/stop 이벤트 기록, 서버 콘솔에 수집 명령 출력 없음 | |
+| 4096바이트 넘는 응답 | 실서버 | 미실행 | 수집 명령 응답이 짧아 해당 없음. 가짜 서버로만 확인 |
+| 접속·퇴장 이벤트 | 실제 클라이언트 접속 | 미실행 | 클라이언트 없음. 단위 테스트로만 확인 |
+| spark 대체 경로 | `/tick query` 없는 구버전 서버 | 미실행 | 26.3에서는 `/tick query`가 동작해 사용되지 않음. 단위 테스트로만 확인 |
 | Linux | e_sqlite3 네이티브 라이브러리 로드 | 미실행 | Linux 환경 없음 |
 
 ## 주요 결정
 - 결정: DB는 서버 폴더별(`<서버>/builder-data/metrics.db`)에 둔다. 이유: 서버와 함께 이동·백업되고, 여러 서버의 지표가 섞이지 않음 (사용자 승인).
 - 결정: SQLite는 별도 프로젝트 `Builder.Storage`에만 넣는다. 이유: Core·CLI 외부 의존성 0 규칙 유지.
 - 결정: 실시간 표시는 메모리에서, DB 기록은 주기 배치로 한다. 이유: 샘플마다 커밋하면 저사양 디스크에 부담이 큼.
+- 결정: TPS·MSPT는 바닐라 `/tick query`를 먼저 쓰고 spark는 대체 경로로 둔다. 이유: 바닐라 명령은 모드 설치와 무관하고 출력이 단순함. spark는 MSPT 평균 대신 중앙값을 줌.
+- 결정: `mchb.exe` 대신 `dotnet Builder.Cli/bin/Debug/net10.0/mchb.dll`로 실서버 검증. 이유: 작업 환경에서 `dotnet run`의 mchb.exe 실행이 "액세스 거부"됨 (코드 문제 아님).
 - 결정: 호출마다 연결을 새로 연다 (연결 풀 사용). 이유: SqliteConnection은 스레드 안전하지 않고, WAL에서는 연결별 동시 조회·기록이 가능함.
 
 ## 남은 작업
-- [ ] 2·3단계 (위 실행 목록)
+- [ ] 3단계 (위 실행 목록)
+- [ ] RCON은 `server-ip`가 비어 있으면 모든 네트워크 주소에서 열린다 (Minecraft 동작). 공유기 포트 포워딩 시 RCON 포트는 열지 않도록 README에 안내 필요
+- [ ] 서버 종료 직전 RCON이 먼저 닫혀 "연결이 끊겼습니다" 로그가 한 줄 나옴 (무해, 필요하면 정리)
 - [ ] 서버 백업 기능을 만들 때 `builder-data/`의 포함 여부 결정 (WAL 파일이 있으면 백업 API 또는 체크포인트 후 복사)

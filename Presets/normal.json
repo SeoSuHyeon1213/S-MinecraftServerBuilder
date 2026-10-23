@@ -25,6 +25,7 @@
     "-XX:MaxTenuringThreshold=1"
   ],
   "chunkPregeneration": "optional",
+  "metricsIntervalSeconds": 1,
   "requiresAutoBackup": false,
   "serverProperties": {
     "view-distance": "10",

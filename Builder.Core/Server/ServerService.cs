@@ -5,6 +5,7 @@ using Builder.Core.Loaders;
 using Builder.Core.Minecraft;
 using Builder.Core.Mods;
 using Builder.Core.Presets;
+using Builder.Core.Rcon;
 
 namespace Builder.Core.Server;
 
@@ -31,6 +32,9 @@ public sealed record LoaderSwitchReport(
     IReadOnlyList<string> DisabledUserMods,
     IReadOnlyList<string> RestoredUserMods,
     ModSyncReport? Mods);
+
+/// <summary>실행 중인 서버 정보. <see cref="ServerService.RunAsync"/>의 모니터(지표 수집기 등)에 전달된다.</summary>
+public sealed record ServerRunContext(string Directory, ServerInstanceConfig Config, ResolvedPreset Preset, Process Process);
 
 /// <summary>서버 생성·재구성·로더 전환·실행. CLI와 이후 웹 서비스가 함께 쓴다.</summary>
 public sealed class ServerService
@@ -244,8 +248,13 @@ public sealed class ServerService
         return (config, report);
     }
 
-    /// <summary>서버를 현재 콘솔에 붙여 실행하고 종료 코드를 돌려준다. 콘솔 입력은 서버로 그대로 전달된다.</summary>
-    public async Task<int> RunAsync(string serverDir, bool allowJavaDownload, CancellationToken ct = default)
+    /// <summary>
+    /// 서버를 현재 콘솔에 붙여 실행하고 종료 코드를 돌려준다. 콘솔 입력은 서버로 그대로 전달된다.
+    /// <paramref name="monitor"/>는 서버가 실행되는 동안 함께 돌고, 서버가 끝나면 취소된다.
+    /// 모니터가 실패해도 서버 실행에는 영향을 주지 않는다 (설계서 2장 원칙).
+    /// </summary>
+    public async Task<int> RunAsync(string serverDir, bool allowJavaDownload,
+        Func<ServerRunContext, CancellationToken, Task>? monitor = null, CancellationToken ct = default)
     {
         var dir = Path.GetFullPath(serverDir);
         var config = ServerInstanceConfig.Load(dir);
@@ -255,6 +264,19 @@ public sealed class ServerService
         var resolved = PresetResolver.Resolve(catalog.Get(config.Preset), config.Overrides);
         var java = await EnsureConfiguredJavaAsync(config, allowJavaDownload, null, ct);
         config.Save(dir);
+
+        // 지표 수집 기능 이전에 만든 서버도 configure 없이 수집되도록, 실행 전에 RCON 설정을 확인한다.
+        if (resolved.MetricsEnabled)
+        {
+            var propertiesPath = Path.Combine(dir, ServerPropertiesFile.FileName);
+            var properties = ServerPropertiesFile.Load(propertiesPath);
+            if (RconSettings.EnsureEnabled(properties))
+            {
+                properties.Save(propertiesPath);
+                log($"지표 수집을 위해 server.properties에서 RCON을 켰습니다 (포트 {properties.Get(RconSettings.PortKey)}). " +
+                    $"끄려면 'configure --set {PresetResolver.MetricsIntervalKey}=0' 후 enable-rcon=false로 바꾸세요.");
+            }
+        }
 
         var loader = GetLoader(config.Loader);
         var psi = new ProcessStartInfo(java) { WorkingDirectory = dir, UseShellExecute = false };
@@ -278,9 +300,31 @@ public sealed class ServerService
         log($"서버 시작: {ModLoaders.DisplayName(config.Loader)} {config.LoaderVersion}, " +
             $"프리셋 {resolved.Source.DisplayName}({resolved.Source.Id}), 힙 {resolved.HeapMb}MB, 모드 {modCount}개");
         using var process = Process.Start(psi) ?? throw new InvalidOperationException("Java 프로세스를 시작하지 못했습니다.");
+        using var monitorStop = new CancellationTokenSource();
+        var monitorTask = monitor is null
+            ? Task.CompletedTask
+            : Task.Run(() => RunMonitorAsync(monitor, new ServerRunContext(dir, config, resolved, process), monitorStop.Token));
+
         // 취소(Ctrl+C) 시에도 서버가 월드를 저장하고 스스로 끝날 때까지 기다린다.
         await process.WaitForExitAsync(CancellationToken.None);
+        await monitorStop.CancelAsync();
+        await monitorTask;
         return process.ExitCode;
+    }
+
+    private async Task RunMonitorAsync(Func<ServerRunContext, CancellationToken, Task> monitor, ServerRunContext context, CancellationToken ct)
+    {
+        try
+        {
+            await monitor(context, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            log($"주의: 서버 모니터가 중단되었습니다 (서버는 계속 실행): {ex.Message}");
+        }
     }
 
     public async Task<JavaInstallation> EnsureJavaAsync(

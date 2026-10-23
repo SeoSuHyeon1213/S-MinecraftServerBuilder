@@ -50,7 +50,7 @@ Fabric Game Server (Java)
 |---|---|---|
 | 실시간 통신 | Minecraft TCP 프로토콜 | 플레이어·월드 동기화 |
 | 내부 통신 | 로컬 소켓 + MessagePack | FabricBridge → C# 서비스 (지표·이벤트) |
-| 콘솔 명령 | RCON | C# 서비스 → 서버 (명령 실행, 설정 즉시 반영) |
+| 콘솔 명령 | RCON | C# 서비스 → 서버 (명령 실행, 설정 즉시 반영). FabricBridge 전까지는 지표 수집도 담당: `/tick query`(없으면 `/spark tps`)로 TPS·MSPT, `/list`로 접속자 |
 | 웹 통신 | HTTP API | 관리·통계·외부 연동 |
 | 비동기 처리 | Queue / Worker | 로그·통계·백업 |
 | 지표 저장 | SQLite (서버 폴더별 `builder-data/metrics.db`, WAL) | 원본 샘플·1분 집계·이벤트, 보존 기간 지난 데이터 정리 |
@@ -82,7 +82,7 @@ Fabric Game Server (Java)
 | `network-compression-threshold` | 256 | 256 | 512 | 512 (LAN이면 -1) |
 | 청크 사전 생성 | 선택 | 권장 | 필수 | 필수 + 월드 경계 고정 |
 | 최적화 모드 | 기본 묶음 + C2ME | 기본 묶음 + C2ME(스레드 제한) | 기본 묶음 | 기본 묶음 |
-| 백그라운드 작업 | 실시간 통계 | 5초 단위 통계 | 30초 단위, 백업은 접속자 0명일 때 | 통계 최소화, 대시보드 수동 갱신 |
+| 백그라운드 작업 | 실시간 통계 (1초) | 5초 단위 통계 | 30초 단위, 백업은 접속자 0명일 때 | 통계 최소화 (60초), 대시보드 수동 갱신 |
 
 **기본 묶음:** Lithium, FerriteCore, ModernFix, Krypton, spark, Chunky
 
