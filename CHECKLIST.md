@@ -17,7 +17,7 @@
 ## 현재 상태
 - 진행 단계: 1차 단계 완료, 작업 2(Modrinth 모드 자동 설치) 완료 — 아래 "작업 2" 섹션 참조
 - 다음 할 일: 작업 3(NeoForge 지원) Windows 빌드·테스트·실서버 검증 → Chunky 청크 사전 생성, 자동 백업(low/minimum 강제)
-- 병행 작업: 작업 4(SQLite 지표 저장, `feature/sqlite-metrics` 브랜치) 1~3단계 완료·커밋. 원격 push와 main 병합은 사용자 결정 대기 — 아래 "작업 4" 섹션 참조
+- 병행 작업: 작업 4(SQLite 지표 저장, `feature/sqlite-metrics` 브랜치) 1~3단계 완료, 원격 push 완료(2026-10-23). main 병합(PR)은 사용자 결정 대기 — 아래 "작업 4" 섹션 참조
 - 차단 원인: 없음
 
 ## 1. 사전 확인
@@ -179,7 +179,7 @@
 - 완료 조건: (1단계) 저장소가 스키마 생성·배치 기록·조회·1분 집계·보존 정리를 하고 단위 테스트로 확인된다. (2~3단계) 실서버에서 RCON으로 수집한 지표가 DB에 쌓이고 `mchb stats`로 조회된다.
 
 ## 실행
-- [x] 브랜치 `feature/sqlite-metrics` 생성 (main에서 분기, 원격에는 아직 push 안 함)
+- [x] 브랜치 `feature/sqlite-metrics` 생성 (main에서 분기, 2026-10-23 `origin/feature/sqlite-metrics`로 push)
 - [x] `Builder.Storage` 프로젝트 (Microsoft.Data.Sqlite 10.0.13), 솔루션 등록
 - [x] `MetricsStore`: `<서버>/builder-data/metrics.db`, WAL + `synchronous=NORMAL`, `PRAGMA user_version` 마이그레이션(더 새 스키마는 열기 거부), `samples`·`samples_1m`·`events` 테이블
 - [x] 배치 기록(한 트랜잭션, 준비된 명령), 조회(최근 샘플, 1분 집계, 이벤트 종류 필터), 구간 요약(MSPT 95백분위는 최근접 순위 방식)
@@ -219,12 +219,13 @@
 - 결정: `mchb.exe` 대신 `dotnet Builder.Cli/bin/Debug/net10.0/mchb.dll`로 실서버 검증. 이유: 작업 환경에서 `dotnet run`의 mchb.exe 실행이 "액세스 거부"됨 (코드 문제 아님).
 - 결정: 호출마다 연결을 새로 연다 (연결 풀 사용). 이유: SqliteConnection은 스레드 안전하지 않고, WAL에서는 연결별 동시 조회·기록이 가능함.
 
-## 커밋 기록 (`feature/sqlite-metrics`, 원격 push 안 함)
+## 커밋 기록 (`feature/sqlite-metrics`, `origin`에 push됨)
 | 커밋 | 내용 |
 |---|---|
 | `42660d0` | 1단계: `Builder.Storage` (MetricsStore·MetricsWriter), 테스트 20개, 문서 |
 | `24e6431` | 2단계: RCON 클라이언트·설정, 프리셋 수집 주기, 실행 중 지표 수집, 실서버 검증 |
 | `c0afafc` | 3단계: `mchb stats`, README 지표·RCON 안내 |
+| `dd64798` | CHECKLIST 커밋 기록·상태 보완 |
 
 ## 완료
 - [x] 필요한 문서를 갱신했다. (AGENTS.md, 설계서 3·4·6장, README, CHECKLIST)
@@ -233,7 +234,8 @@
 - [x] 사용자에게 변경 내용과 검증 결과를 설명했다.
 
 ## 남은 작업
-- [ ] 원격 push와 main 병합 (사용자 결정 대기)
+- [x] 원격 push (2026-10-23, `origin/feature/sqlite-metrics`)
+- [ ] main 병합 — PR 생성 여부는 사용자 결정 대기
 - [ ] 서버 실행 중 `stats`를 다른 터미널에서 실행해 실서버 DB로 확인
 - [ ] 1분 집계(`samples_1m`)를 쓰는 장기 추이 표시 (48시간 넘는 구간) — 웹 대시보드 단계에서 검토
 - [ ] 힙 사용량: RCON으로는 얻을 수 없음 → FabricBridge 단계
