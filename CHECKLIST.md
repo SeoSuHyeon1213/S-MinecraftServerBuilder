@@ -17,6 +17,7 @@
 ## 현재 상태
 - 진행 단계: 1차 단계 완료, 작업 2(Modrinth 모드 자동 설치) 완료 — 아래 "작업 2" 섹션 참조
 - 다음 할 일: 작업 3(NeoForge 지원) Windows 빌드·테스트·실서버 검증 → Chunky 청크 사전 생성, 자동 백업(low/minimum 강제)
+- 병행 작업: 작업 4(SQLite 지표 저장, `feature/sqlite-metrics` 브랜치) — 아래 "작업 4" 섹션 참조
 - 차단 원인: 없음
 
 ## 1. 사전 확인
@@ -167,3 +168,43 @@
 - [ ] NeoForge 서버 실제 생성·기동, 인스톨러가 `libraries/net/neoforged/neoforge/<버전>/win_args.txt`를 만드는지 확인
 - [ ] 모드 50개 구성으로 spark 실측 후 권장 힙 어림값 보정
 - [ ] (선택) CurseForge 소스 — 50개 모드 중 Modrinth에 없는 모드 대응
+
+---
+
+# 작업 4 — SQLite 지표 저장 (2026-10-23, 브랜치 `feature/sqlite-metrics`)
+
+## 목표와 범위
+- 목표: 설계서 2장 Storage Worker의 저장소로 SQLite를 도입해 TPS·MSPT·메모리·접속자 지표와 이벤트를 서버 폴더별로 기록·조회한다. 적응형 단계 조정(설계서 4장 5번)과 프리셋 단계별 성능 비교(9장)의 기반으로 쓴다.
+- 작업 대상: `Builder.Storage/`(신규), `Tests/Builder.Storage.Tests/`(신규), 솔루션, AGENTS.md, 설계서 3·6장, README
+- 완료 조건: (1단계) 저장소가 스키마 생성·배치 기록·조회·1분 집계·보존 정리를 하고 단위 테스트로 확인된다. (2~3단계) 실서버에서 RCON으로 수집한 지표가 DB에 쌓이고 `mchb stats`로 조회된다.
+
+## 실행
+- [x] 브랜치 `feature/sqlite-metrics` 생성 (main에서 분기, 원격에는 아직 push 안 함)
+- [x] `Builder.Storage` 프로젝트 (Microsoft.Data.Sqlite 10.0.13), 솔루션 등록
+- [x] `MetricsStore`: `<서버>/builder-data/metrics.db`, WAL + `synchronous=NORMAL`, `PRAGMA user_version` 마이그레이션(더 새 스키마는 열기 거부), `samples`·`samples_1m`·`events` 테이블
+- [x] 배치 기록(한 트랜잭션, 준비된 명령), 조회(최근 샘플, 1분 집계, 이벤트 종류 필터), 구간 요약(MSPT 95백분위는 최근접 순위 방식)
+- [x] `Compact`: 끝난 분만 1분 집계(집계 지연 1분), 이미 집계된 분 이후만 처리, 보존 기간 정리(원본 48시간, 집계·이벤트 30일 기본값). 집계 안 된 원본은 지우지 않음
+- [x] `MetricsWriter`: 샘플은 용량 제한 큐(가득 차면 오래된 것부터 버림, 버린 수 집계), 이벤트는 버리지 않는 큐, 주기 기록·주기 정리, 기록 실패 시 로그만 남기고 계속 동작, Dispose 시 남은 데이터 기록
+- [x] 단위 테스트 20개 (`Tests/Builder.Storage.Tests`)
+- [x] AGENTS.md(디렉터리·의존성·DB 위치·스키마 규칙), 설계서 3·6장, README 갱신
+- [ ] 2단계: RCON 클라이언트, `enable-rcon` 자동 구성(비밀번호는 builder.json 밖), 프리셋별 수집 주기(설계서 4장 "백그라운드 작업" 행), Java 프로세스 메모리·CPU 수집
+- [ ] 3단계: `mchb stats <폴더>` 명령 (최근 TPS·MSPT p95·메모리 요약)
+
+## 검증 기록
+| 확인 항목 | 명령 또는 방법 | 결과 | 미실행·실패 이유 |
+|---|---|---|---|
+| 빌드 | `dotnet build MinecraftHybridBuilder.slnx` (Windows 11, .NET SDK 10.0.401) | 통과 (경고 0, 오류 0) | |
+| 단위 테스트 | `dotnet test MinecraftHybridBuilder.slnx` | 통과 (Core 79/79, Storage 20/20) | |
+| 타이머 테스트 안정성 | `dotnet test Tests/Builder.Storage.Tests --no-build` 5회 반복 | 5회 모두 통과 | |
+| 실서버 지표 기록 | RCON 수집 → DB | 미실행 | 2단계 수집기 미구현 |
+| Linux | e_sqlite3 네이티브 라이브러리 로드 | 미실행 | Linux 환경 없음 |
+
+## 주요 결정
+- 결정: DB는 서버 폴더별(`<서버>/builder-data/metrics.db`)에 둔다. 이유: 서버와 함께 이동·백업되고, 여러 서버의 지표가 섞이지 않음 (사용자 승인).
+- 결정: SQLite는 별도 프로젝트 `Builder.Storage`에만 넣는다. 이유: Core·CLI 외부 의존성 0 규칙 유지.
+- 결정: 실시간 표시는 메모리에서, DB 기록은 주기 배치로 한다. 이유: 샘플마다 커밋하면 저사양 디스크에 부담이 큼.
+- 결정: 호출마다 연결을 새로 연다 (연결 풀 사용). 이유: SqliteConnection은 스레드 안전하지 않고, WAL에서는 연결별 동시 조회·기록이 가능함.
+
+## 남은 작업
+- [ ] 2·3단계 (위 실행 목록)
+- [ ] 서버 백업 기능을 만들 때 `builder-data/`의 포함 여부 결정 (WAL 파일이 있으면 백업 API 또는 체크포인트 후 복사)

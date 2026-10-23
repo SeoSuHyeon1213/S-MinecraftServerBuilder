@@ -79,6 +79,7 @@ NeoForge에서는 Krypton(Fabric 전용)을 건너뛰고, C2ME는 NeoForge 포�
 ```
 Builder.Core/   핵심 기능 (사양 측정, 프리셋, Java 설치, 로더(Fabric·NeoForge) 설치, 모드 설치)
 Builder.Cli/    명령줄 도구
+Builder.Storage/ 서버 지표 저장소 (SQLite, 개발 중)
 Presets/        프리셋 정의 (JSON)
 Mods/           최적화 모드 목록 (JSON)
 Tests/          단위 테스트 (dotnet test)

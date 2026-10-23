@@ -53,6 +53,7 @@ Fabric Game Server (Java)
 | 콘솔 명령 | RCON | C# 서비스 → 서버 (명령 실행, 설정 즉시 반영) |
 | 웹 통신 | HTTP API | 관리·통계·외부 연동 |
 | 비동기 처리 | Queue / Worker | 로그·통계·백업 |
+| 지표 저장 | SQLite (서버 폴더별 `builder-data/metrics.db`, WAL) | 원본 샘플·1분 집계·이벤트, 보존 기간 지난 데이터 정리 |
 
 ### 메시지 규격
 
@@ -119,6 +120,7 @@ MinecraftHybridBuilder/
 ├── Builder.Core/        # 설정·프리셋·서버·모드 관리, 하드웨어 감지
 ├── Builder.Cli/         # Windows/Linux 실행 도구
 ├── Builder.Web/         # ASP.NET Core API + 대시보드
+├── Builder.Storage/     # SQLite 지표 저장소 (원본 48시간, 1분 집계·이벤트 30일 기본 보존)
 ├── Builder.Worker/      # 비동기 작업 처리 (초기엔 Web 내부 BackgroundService)
 ├── FabricBridge/        # Java 기반 Fabric 모드
 ├── Protocol/            # MessagePack 메시지 규격

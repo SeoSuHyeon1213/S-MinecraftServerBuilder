@@ -1,7 +1,9 @@
 <Solution>
   <Folder Name="/Tests/">
     <Project Path="Tests/Builder.Core.Tests/Builder.Core.Tests.csproj" />
+    <Project Path="Tests/Builder.Storage.Tests/Builder.Storage.Tests.csproj" />
   </Folder>
   <Project Path="Builder.Cli/Builder.Cli.csproj" />
   <Project Path="Builder.Core/Builder.Core.csproj" />
+  <Project Path="Builder.Storage/Builder.Storage.csproj" />
 </Solution>
