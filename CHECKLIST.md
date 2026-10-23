@@ -17,7 +17,7 @@
 ## 현재 상태
 - 진행 단계: 1차 단계 완료, 작업 2(Modrinth 모드 자동 설치) 완료 — 아래 "작업 2" 섹션 참조
 - 다음 할 일: 작업 3(NeoForge 지원) Windows 빌드·테스트·실서버 검증 → Chunky 청크 사전 생성, 자동 백업(low/minimum 강제)
-- 병행 작업: 작업 4(SQLite 지표 저장, `feature/sqlite-metrics` 브랜치) 1~3단계 완료, main 병합 검토 대기 — 아래 "작업 4" 섹션 참조
+- 병행 작업: 작업 4(SQLite 지표 저장, `feature/sqlite-metrics` 브랜치) 1~3단계 완료·커밋. 원격 push와 main 병합은 사용자 결정 대기 — 아래 "작업 4" 섹션 참조
 - 차단 원인: 없음
 
 ## 1. 사전 확인
@@ -164,7 +164,7 @@
 - 결정: 프리셋 힙 값(설계서 4장)은 바꾸지 않았다.
 
 ## 남은 작업
-- [ ] Windows에서 빌드·테스트 실행, 실패 시 수정
+- [x] Windows에서 빌드·테스트 실행, 실패 시 수정 — 2026-10-23 작업 4 브랜치 분기 직후(Core 미변경) `dotnet build`·`dotnet test` 통과 (경고 0, Core 79/79). Fabric 26.3 서버 생성·기동도 작업 4 실서버 검증에서 정상. NeoForge 실서버는 여전히 미확인
 - [ ] NeoForge 서버 실제 생성·기동, 인스톨러가 `libraries/net/neoforged/neoforge/<버전>/win_args.txt`를 만드는지 확인
 - [ ] 모드 50개 구성으로 spark 실측 후 권장 힙 어림값 보정
 - [ ] (선택) CurseForge 소스 — 50개 모드 중 Modrinth에 없는 모드 대응
@@ -213,13 +213,27 @@
 
 ## 주요 결정
 - 결정: DB는 서버 폴더별(`<서버>/builder-data/metrics.db`)에 둔다. 이유: 서버와 함께 이동·백업되고, 여러 서버의 지표가 섞이지 않음 (사용자 승인).
-- 결정: SQLite는 별도 프로젝트 `Builder.Storage`에만 넣는다. 이유: Core·CLI 외부 의존성 0 규칙 유지.
+- 결정: SQLite는 별도 프로젝트 `Builder.Storage`에만 넣는다. 이유: Core 외부 의존성 0 규칙 유지. (2단계부터 CLI가 지표 수집·조회를 위해 `Builder.Storage`를 참조하므로 CLI에는 SQLite가 간접 의존성으로 들어감 — AGENTS.md 반영)
 - 결정: 실시간 표시는 메모리에서, DB 기록은 주기 배치로 한다. 이유: 샘플마다 커밋하면 저사양 디스크에 부담이 큼.
 - 결정: TPS·MSPT는 바닐라 `/tick query`를 먼저 쓰고 spark는 대체 경로로 둔다. 이유: 바닐라 명령은 모드 설치와 무관하고 출력이 단순함. spark는 MSPT 평균 대신 중앙값을 줌.
 - 결정: `mchb.exe` 대신 `dotnet Builder.Cli/bin/Debug/net10.0/mchb.dll`로 실서버 검증. 이유: 작업 환경에서 `dotnet run`의 mchb.exe 실행이 "액세스 거부"됨 (코드 문제 아님).
 - 결정: 호출마다 연결을 새로 연다 (연결 풀 사용). 이유: SqliteConnection은 스레드 안전하지 않고, WAL에서는 연결별 동시 조회·기록이 가능함.
 
+## 커밋 기록 (`feature/sqlite-metrics`, 원격 push 안 함)
+| 커밋 | 내용 |
+|---|---|
+| `42660d0` | 1단계: `Builder.Storage` (MetricsStore·MetricsWriter), 테스트 20개, 문서 |
+| `24e6431` | 2단계: RCON 클라이언트·설정, 프리셋 수집 주기, 실행 중 지표 수집, 실서버 검증 |
+| `c0afafc` | 3단계: `mchb stats`, README 지표·RCON 안내 |
+
+## 완료
+- [x] 필요한 문서를 갱신했다. (AGENTS.md, 설계서 3·4·6장, README, CHECKLIST)
+- [x] 변경 내용을 최종 검토했다.
+- [x] 미완료 항목과 남은 한계를 기록했다. (검증 기록의 미실행 항목, 아래 남은 작업)
+- [x] 사용자에게 변경 내용과 검증 결과를 설명했다.
+
 ## 남은 작업
+- [ ] 원격 push와 main 병합 (사용자 결정 대기)
 - [ ] 서버 실행 중 `stats`를 다른 터미널에서 실행해 실서버 DB로 확인
 - [ ] 1분 집계(`samples_1m`)를 쓰는 장기 추이 표시 (48시간 넘는 구간) — 웹 대시보드 단계에서 검토
 - [ ] 힙 사용량: RCON으로는 얻을 수 없음 → FabricBridge 단계
