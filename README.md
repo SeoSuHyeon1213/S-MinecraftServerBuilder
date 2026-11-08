@@ -15,6 +15,7 @@ PC 사양에 맞는 경량화 프리셋을 고르고, 필요한 Java·Fabric·�
 - **설정 자동 구성**: 프리셋에 맞게 `server.properties`, JVM 메모리·GC 옵션, 시작 스크립트(`start.bat`, `start.sh`)를 만듭니다.
 - **서버 지표 기록**: `start`로 실행하는 동안 RCON으로 TPS·MSPT·접속자를, Java 프로세스에서 메모리·CPU를 읽어 서버 폴더의 `builder-data/metrics.db`(SQLite)에 기록합니다. 기록 주기는 프리셋마다 다릅니다(일반 1초 · 중간 5초 · 저 30초 · 최저 60초). `stats`로 요약과 성능 판정을 볼 수 있습니다.
 - **최적화 모드 자동 설치**: [Modrinth](https://modrinth.com)에서 서버 버전에 맞는 모드와 필수 의존성을 설치합니다. 맞는 버전이 없는 모드는 건너뛰고 이유를 알려 줍니다. 사용자가 직접 넣은 모드는 건드리지 않습니다.
+- **베드락판 크로스플레이**: `--crossplay` 또는 `crossplay <폴더> on`으로 [Geyser](https://geysermc.org)와 Floodgate를 설치해 모바일·Windows 베드락 사용자가 Java 계정 없이 접속하게 합니다. 아래 "크로스플레이" 참고.
 
 ## 필요 환경
 
@@ -38,6 +39,9 @@ dotnet run --project Builder.Cli -- create servers/neo --modloader neoforge --pr
 # 기존 Fabric 서버를 NeoForge로 전환 (월드가 있으면 백업 후 --confirm)
 dotnet run --project Builder.Cli -- switch-loader servers/my-server neoforge --confirm
 
+# 베드락판 크로스플레이 켜기 (기본 UDP 19132)
+dotnet run --project Builder.Cli -- crossplay servers/my-server on
+
 # 서버 실행
 dotnet run --project Builder.Cli -- start servers/my-server
 
@@ -58,6 +62,7 @@ dotnet run --project Builder.Cli -- stats servers/my-server --since 1h
 | `switch-loader <폴더> <로더>` | Fabric ↔ NeoForge 전환 (`--loader <버전>`, `--confirm`) |
 | `configure <폴더>` | 프리셋·설정 변경 (예: `--preset 중간 --set server.view-distance=8`) |
 | `mods <폴더>` | 설치된 모드 확인, `--update`로 최신 호환 버전으로 갱신 |
+| `crossplay <폴더> [on\|off]` | 베드락판 크로스플레이 켜기·끄기·상태 (`--bedrock-port <포트>`) |
 | `start <폴더>` | 서버 실행, 실행 중 지표 기록 (`--no-metrics`로 이번 실행만 끔) |
 | `stats <폴더>` | 지표 요약과 성능 판정 (`--since 30m`/`6h`/`2d`, `--recent`, `--events`) |
 
@@ -89,6 +94,17 @@ NeoForge에서는 Krypton(Fabric 전용)을 건너뛰고, C2ME는 NeoForge 포�
 - `stats` 판정은 설계 목표(20 TPS, 틱당 50ms)를 기준으로 하며, MSPT 95백분위가 50ms를 넘으면 한 단계 낮은 프리셋을 제안합니다. 설정을 자동으로 바꾸지는 않습니다.
 - 원본 샘플은 48시간, 1분 집계와 이벤트는 30일 동안 보관합니다.
 
+## 크로스플레이
+
+Geyser(베드락 ↔ Java 프로토콜 변환)와 Floodgate(베드락 사용자를 Java 계정 없이 인증)를 Modrinth에서 설치합니다. Fabric·NeoForge 모두 같은 방법으로 켭니다.
+
+- Geyser는 모든 빌드를 베타로 배포하므로 이 모드만 베타 설치를 허용합니다. 의존성(fabric-api 등)과 다른 모드는 정식 버전 규칙을 그대로 따릅니다.
+- 베드락 포트와 Floodgate 인증 방식은 시작 스크립트의 환경 변수(`GEYSER_BEDROCK_PORT`, `GEYSER_JAVA_AUTH_TYPE=floodgate`)로 넘깁니다. `config/Geyser-Fabric/config.yml`은 고치지 않으며, 환경 변수 값이 파일보다 우선합니다.
+- 베드락은 **UDP** 포트(기본 19132)로 접속합니다. 방화벽 허용과 공유기 포트포워딩은 빌더가 바꾸지 않으니 직접 설정하세요. 이 포트는 Java 게임 포트·RCON 포트와 같으면 안 됩니다.
+- Xbox·PlayStation·Switch는 서버 주소를 직접 추가할 수 없어 별도 우회 방법이 필요합니다.
+- 베드락 사용자 이름에는 `.` 접두사가 붙고, 화이트리스트는 `fwhitelist` 명령을 씁니다.
+- 베드락 클라이언트가 업데이트되면 그 버전을 지원하는 Geyser가 필요합니다. 접속이 안 되면 `mods <폴더> --update`를 실행하세요.
+
 ## 프로젝트 구조
 
 ```
@@ -109,6 +125,7 @@ Tests/          단위 테스트 (dotnet test)
 - [x] NeoForge 지원, Fabric ↔ NeoForge 전환
 - [ ] Chunky 청크 사전 생성, 자동 백업
 - [x] RCON 연동, 서버 지표 기록(SQLite)과 `stats` 요약
+- [x] 베드락판 크로스플레이 (Geyser + Floodgate) — 실제 베드락 접속은 아직 미확인
 - [ ] 서버 상태 수집 모드(FabricBridge) — 힙 사용량 등 정밀 지표
 - [ ] 웹 대시보드
 - [ ] Linux 지원

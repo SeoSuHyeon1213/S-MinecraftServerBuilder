@@ -42,6 +42,9 @@
 - `builder.json`의 `loader`가 없으면(스키마 1) Fabric으로 읽는다. 저장 시 스키마 2로 기록한다.
 - 로더 전환 시 사용자 jar는 지우지 않고 다른 로더 전용만 `mods-disabled/<이전 로더>/`로 옮긴다. 월드 폴더가 있으면 `--confirm` 없이는 전환하지 않는다.
 - 카탈로그 모드가 로더별로 다른 프로젝트면 `"modrinth@neoforge"` 키를, 특정 로더 전용이면 `loaders` 목록을 쓴다.
+- 정식 버전을 내지 않고 베타로만 배포하는 모드(예: Geyser)는 카탈로그 항목에 `"allowBeta": true`를 쓴다. 이 허용은 그 모드에만 적용되고 필수 의존성과 알파는 서버의 `allowUnstableMods`를 따른다. 소스 조회는 허용할 최대 채널(`ReleaseChannel`)로 한다.
+- 크로스플레이 모드(`geyser`, `floodgate`)는 프리셋 `mods`에 넣지 않고 `builder.json`의 `crossplay.enabled`로만 설치·제거한다. 모드 동기화 대상은 `Crossplay.WantedMods`(프리셋 모드 + 크로스플레이 모드)로 만든다.
+- Geyser 설정은 `config.yml`을 고치지 않고 `GEYSER_<설정 경로>` 환경 변수로 넘긴다 (`Crossplay.Environment` → 시작 스크립트와 `start` 프로세스). 현재 `GEYSER_BEDROCK_PORT`, `GEYSER_JAVA_AUTH_TYPE=floodgate` (Fabric용 Geyser는 Floodgate가 있어도 기본 `auth-type: online`, 2026-10-27 확인). 방화벽·공유기 설정은 바꾸지 않고 안내만 한다.
 - 모드 설치는 사용자가 직접 넣은 jar를 덮어쓰거나 지우지 않는다. `builder.json`의 `mods` 기록에 있는 파일만 빌더가 관리한다.
 - API 키 등 비밀 값은 저장소·builder.json에 쓰지 않는다 (CurseForge 연동 시 사용자 환경 변수·개인 설정 사용).
 - SQLite 등 외부 패키지가 필요한 기능은 `Builder.Core`에 넣지 않고 별도 프로젝트로 분리한다.

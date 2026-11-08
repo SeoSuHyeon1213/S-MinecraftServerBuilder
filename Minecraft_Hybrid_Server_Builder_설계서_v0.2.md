@@ -135,6 +135,7 @@ MinecraftHybridBuilder/
 - **NeoForge Maven (maven.neoforged.net):** `maven-metadata.xml`로 버전 조회(1.X.Y → X.Y.빌드, 26.N[.P] → 26.N.P.빌드), 인스톨러 `--install-server`로 설치, `@libraries/net/neoforged/neoforge/<버전>/win_args.txt|unix_args.txt`로 실행. 로더는 `IServerLoader`로 추상화하며 `switch-loader`로 같은 Minecraft 버전 안에서 Fabric ↔ NeoForge 전환을 지원한다 (2026-10-19 추가)
 - **Modrinth API (기본 모드 소스):** 모드 검색, 버전 호환성, 의존성 확인. API 키 불필요, SHA-512 해시 제공
 - **CurseForge API (추후 확장):** 아래 "모드 소스 구조"에 맞춰 필요할 때 추가한다.
+- **베드락판 크로스플레이 (2026-10-27 추가):** Geyser + Floodgate를 Modrinth에서 설치한다(Fabric·NeoForge 공통 slug). 프리셋 묶음과 별개로 `crossplay` 설정으로 켜고 끈다. Geyser는 모든 빌드가 베타이므로 카탈로그 항목별 `allowBeta`로 그 모드만 베타를 허용한다. 베드락 포트와 인증 방식(floodgate)은 Geyser의 `GEYSER_*` 환경 변수 덮어쓰기로 넘기고 설정 파일은 고치지 않는다. 베드락은 UDP 포트(기본 19132)를 쓰며, 방화벽·포트포워딩은 안내만 한다
 - **Adoptium API:** Java 런타임 미설치 시 다운로드. 필요한 Java 버전은 Mojang 버전 메타데이터(`javaVersion.majorVersion`)에서 읽는다 (2026-10 기준 최신 26.3은 Java 25 필요)
 
 ### 모드 소스 구조
@@ -181,6 +182,7 @@ ModInstaller (버전 선택 · 의존성 · 해시 검사 · 설치 기록)
 | 4차 | FabricBridge, MessagePack IPC, RCON 연동 | 내부 통신 시스템 |
 | 5차 | 웹 API·대시보드·비동기 작업, 적응형 단계 조정 | 관리 웹 서비스 |
 | 6차 | Linux 지원·배포 자동화 | 크로스플랫폼 빌더 |
+| 추가 | 베드락판 크로스플레이 (Geyser + Floodgate, 6장 외부 연동 참조) | 크로스플레이 서버 |
 | 추후 | CurseForge 모드 소스 (6장 "모드 소스 구조" 참조) | 모드 소스 확장 |
 | 추후 | 모드 버전, 비트 패킹 기반 데이터 최적화 | 자체 최적화 모드 |
 

@@ -47,6 +47,9 @@ public sealed class ServerInstanceConfig
     /// <summary>빌더가 설치한 모드 기록. 사용자가 직접 넣은 jar는 여기에 없다.</summary>
     public List<InstalledMod> Mods { get; init; } = [];
 
+    /// <summary>베드락판 크로스플레이 설정. 이 항목이 없는 이전 파일은 꺼진 것으로 읽는다.</summary>
+    public CrossplaySettings Crossplay { get; init; } = new();
+
     public static bool Exists(string serverDir) => File.Exists(Path.Combine(serverDir, FileName));
 
     public static ServerInstanceConfig Load(string serverDir)
@@ -168,7 +171,9 @@ public static class ServerLaunch
     ];
 
     /// <summary>프리셋을 server.properties와 실행 스크립트(start.bat / start.sh)에 반영한다.</summary>
-    public static void Apply(string serverDir, ResolvedPreset preset, string javaPath, IServerLoader loader, string loaderVersion)
+    /// <param name="environment">스크립트가 Java 실행 전에 설정할 환경 변수 (예: <see cref="Crossplay.Environment"/>).</param>
+    public static void Apply(string serverDir, ResolvedPreset preset, string javaPath, IServerLoader loader, string loaderVersion,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         var propertiesPath = Path.Combine(serverDir, ServerPropertiesFile.FileName);
         var properties = ServerPropertiesFile.Load(propertiesPath);
@@ -182,21 +187,27 @@ public static class ServerLaunch
         // NeoForge는 OS별 인자 파일이 다르므로 스크립트마다 따로 만든다.
         WriteScripts(serverDir, javaPath,
             BuildArguments(preset, loader.LaunchArguments(loaderVersion, windows: true)),
-            BuildArguments(preset, loader.LaunchArguments(loaderVersion, windows: false)));
+            BuildArguments(preset, loader.LaunchArguments(loaderVersion, windows: false)),
+            environment ?? new Dictionary<string, string>());
     }
 
     private static void WriteScripts(
-        string serverDir, string javaPath, IReadOnlyList<string> windowsArguments, IReadOnlyList<string> unixArguments)
+        string serverDir, string javaPath, IReadOnlyList<string> windowsArguments, IReadOnlyList<string> unixArguments,
+        IReadOnlyDictionary<string, string> environment)
     {
         var batArgs = string.Join(' ', windowsArguments);
         var shArgs = string.Join(' ', unixArguments);
         var utf8 = new UTF8Encoding(false);
+        // 값은 빌더가 만든 숫자 등 단순한 문자열만 넘긴다 (따옴표 이스케이프 없음).
+        var batEnvironment = string.Concat(environment.Select(e => $"set \"{e.Key}={e.Value}\"\r\n"));
+        var shEnvironment = string.Concat(environment.Select(e => $"export {e.Key}='{e.Value}'\n"));
 
         File.WriteAllText(Path.Combine(serverDir, "start.bat"),
             "@echo off\r\n" +
             "rem MinecraftHybridBuilder가 생성한 파일입니다. 'mchb configure'를 실행하면 다시 생성됩니다.\r\n" +
             "chcp 65001 > nul\r\n" +
             "cd /d \"%~dp0\"\r\n" +
+            batEnvironment +
             $"\"{javaPath}\" {batArgs}\r\n" +
             "pause\r\n", utf8);
 
@@ -205,6 +216,7 @@ public static class ServerLaunch
             "#!/bin/sh\n" +
             "# MinecraftHybridBuilder가 생성한 파일입니다. 'mchb configure'를 실행하면 다시 생성됩니다.\n" +
             "cd \"$(dirname \"$0\")\" || exit 1\n" +
+            shEnvironment +
             $"exec \"{javaPath}\" {shArgs}\n", utf8);
 
         if (!OperatingSystem.IsWindows())

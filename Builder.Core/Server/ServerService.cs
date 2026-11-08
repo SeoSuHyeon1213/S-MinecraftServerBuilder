@@ -19,7 +19,9 @@ public sealed record CreateServerRequest(
     bool AllowJavaDownload,
     bool InstallMods = true,
     bool AllowUnstableMods = false,
-    string ModLoader = ModLoaders.Fabric);
+    string ModLoader = ModLoaders.Fabric,
+    bool Crossplay = false,
+    int BedrockPort = Server.Crossplay.DefaultBedrockPort);
 
 /// <param name="RemovedManagedMods">빌더가 설치했다가 이전 로더용이라 지운 모드.</param>
 /// <param name="DisabledUserMods">사용자가 넣은 이전 로더 전용 jar (mods-disabled/&lt;이전 로더&gt;/ 로 옮김).</param>
@@ -72,6 +74,8 @@ public sealed class ServerService
             throw new InvalidOperationException($"폴더가 비어 있지 않습니다: {dir}\n기존 서버의 설정을 바꾸려면 'configure', 로더를 바꾸려면 'switch-loader'를 사용하세요.");
         if (!request.EulaAccepted)
             throw new InvalidOperationException($"Minecraft EULA({EulaFile.EulaUrl})에 동의해야 서버를 만들 수 있습니다.");
+        if (request.Crossplay && !request.InstallMods)
+            throw new InvalidOperationException("크로스플레이는 모드 자동 설치가 필요합니다. --no-mods 와 함께 쓸 수 없습니다.");
 
         // 다운로드 전에 입력 오류를 먼저 확인한다.
         var preset = catalog.Get(request.Preset);
@@ -108,17 +112,20 @@ public sealed class ServerService
                 Overrides = new Dictionary<string, string>(request.Overrides, StringComparer.Ordinal),
                 ManageMods = request.InstallMods,
                 AllowUnstableMods = request.AllowUnstableMods,
+                Crossplay = { Enabled = request.Crossplay, BedrockPort = request.BedrockPort },
             };
 
             ModSyncReport? modReport = null;
             if (config.ManageMods)
             {
                 log($"최적화 모드 확인 중 (Modrinth, {loaderName})...");
-                modReport = await mods.SyncAsync(dir, config, preset.Mods, update: true, ct);
+                modReport = await mods.SyncAsync(dir, config, Crossplay.WantedMods(preset.Mods, config), update: true, ct);
             }
 
             config.Save(dir);
-            ServerLaunch.Apply(dir, resolved, java.ExecutablePath, loader, config.LoaderVersion);
+            ServerLaunch.Apply(dir, resolved, java.ExecutablePath, loader, config.LoaderVersion, Crossplay.Environment(config));
+            if (config.Crossplay.Enabled)
+                Crossplay.ValidatePort(config.Crossplay.BedrockPort, LoadProperties(dir));
             return (config, modReport);
         }
         catch
@@ -158,10 +165,10 @@ public sealed class ServerService
         // 프리셋이 바뀌면 모드 구성도 맞춘다. 이미 설치된 모드는 조회 없이 유지한다.
         ModSyncReport? modReport = null;
         if (config.ManageMods)
-            modReport = await mods.SyncAsync(dir, config, resolved.Source.Mods, update: false, ct);
+            modReport = await mods.SyncAsync(dir, config, Crossplay.WantedMods(resolved.Source.Mods, config), update: false, ct);
 
         config.Save(dir);
-        ServerLaunch.Apply(dir, resolved, java, GetLoader(config.Loader), config.LoaderVersion);
+        ServerLaunch.Apply(dir, resolved, java, GetLoader(config.Loader), config.LoaderVersion, Crossplay.Environment(config));
         return (config, resolved, modReport);
     }
 
@@ -218,13 +225,13 @@ public sealed class ServerService
         config.InstallerVersion = plan.InstallerVersion;
         // 모드 설치가 중간에 실패해도 로더 상태가 맞도록 먼저 저장한다.
         config.Save(dir);
-        ServerLaunch.Apply(dir, resolved, java, target, config.LoaderVersion);
+        ServerLaunch.Apply(dir, resolved, java, target, config.LoaderVersion, Crossplay.Environment(config));
 
         ModSyncReport? modReport = null;
         if (config.ManageMods)
         {
             log($"최적화 모드 확인 중 (Modrinth, {targetName})...");
-            modReport = await mods.SyncAsync(dir, config, preset.Mods, update: true, ct);
+            modReport = await mods.SyncAsync(dir, config, Crossplay.WantedMods(preset.Mods, config), update: true, ct);
             config.Save(dir);
         }
 
@@ -243,10 +250,55 @@ public sealed class ServerService
 
         var preset = catalog.Get(config.Preset);
         log($"최적화 모드 확인 중 (Modrinth, Minecraft {config.MinecraftVersion} {ModLoaders.DisplayName(config.Loader)})...");
-        var report = await mods.SyncAsync(dir, config, preset.Mods, update: true, ct);
+        var report = await mods.SyncAsync(dir, config, Crossplay.WantedMods(preset.Mods, config), update: true, ct);
         config.Save(dir);
         return (config, report);
     }
+
+    /// <summary>
+    /// 베드락판 크로스플레이(Geyser + Floodgate)를 켜거나 끄고, 베드락 포트를 바꾼다.
+    /// 켤 때는 두 모드만 새로 찾고 이미 설치된 모드는 조회 없이 유지한다. 끌 때는 두 모드를 지운다
+    /// (필수 의존성으로 함께 설치된 fabric-api 등은 다른 모드가 쓸 수 있으므로 남긴다).
+    /// 시작 스크립트에 베드락 포트 환경 변수를 반영한다.
+    /// </summary>
+    public async Task<(ServerInstanceConfig Config, ModSyncReport? Mods)> SetCrossplayAsync(
+        string serverDir, bool? enabled, int? bedrockPort, bool allowJavaDownload,
+        IProgress<double>? progress = null, CancellationToken ct = default)
+    {
+        var dir = Path.GetFullPath(serverDir);
+        var config = ServerInstanceConfig.Load(dir);
+        var wasEnabled = config.Crossplay.Enabled;
+        if (enabled is not null)
+            config.Crossplay.Enabled = enabled.Value;
+        if (bedrockPort is not null)
+            config.Crossplay.BedrockPort = bedrockPort.Value;
+
+        if (config.Crossplay.Enabled)
+        {
+            if (!config.ManageMods)
+                throw new InvalidOperationException(
+                    "이 서버는 모드 자동 관리가 꺼져 있습니다 (create --no-mods). 크로스플레이를 켜려면 먼저 'mods --update'로 자동 관리를 켜세요.");
+            Crossplay.ValidatePort(config.Crossplay.BedrockPort, LoadProperties(dir));
+        }
+
+        var resolved = PresetResolver.Resolve(catalog.Get(config.Preset), config.Overrides);
+        var java = await EnsureConfiguredJavaAsync(config, allowJavaDownload, progress, ct);
+
+        ModSyncReport? modReport = null;
+        if (config.ManageMods && (config.Crossplay.Enabled || wasEnabled))
+        {
+            if (config.Crossplay.Enabled)
+                log($"크로스플레이 모드 확인 중 (Modrinth, Minecraft {config.MinecraftVersion} {ModLoaders.DisplayName(config.Loader)})...");
+            modReport = await mods.SyncAsync(dir, config, Crossplay.WantedMods(resolved.Source.Mods, config), update: false, ct);
+        }
+
+        config.Save(dir);
+        ServerLaunch.Apply(dir, resolved, java, GetLoader(config.Loader), config.LoaderVersion, Crossplay.Environment(config));
+        return (config, modReport);
+    }
+
+    private static ServerPropertiesFile LoadProperties(string serverDir) =>
+        ServerPropertiesFile.Load(Path.Combine(serverDir, ServerPropertiesFile.FileName));
 
     /// <summary>
     /// 서버를 현재 콘솔에 붙여 실행하고 종료 코드를 돌려준다. 콘솔 입력은 서버로 그대로 전달된다.
@@ -282,6 +334,17 @@ public sealed class ServerService
         var psi = new ProcessStartInfo(java) { WorkingDirectory = dir, UseShellExecute = false };
         foreach (var argument in ServerLaunch.BuildArguments(resolved, loader.LaunchArguments(config.LoaderVersion, OperatingSystem.IsWindows())))
             psi.ArgumentList.Add(argument);
+        foreach (var (key, value) in Crossplay.Environment(config))
+            psi.Environment[key] = value;
+
+        if (config.Crossplay.Enabled)
+        {
+            var missing = Crossplay.ModIds.Where(id => config.Mods.All(m => m.CatalogId != id)).ToList();
+            log(missing.Count == 0
+                ? $"크로스플레이 켜짐: 베드락 접속 포트 UDP {config.Crossplay.BedrockPort}"
+                : $"주의: 크로스플레이가 켜져 있지만 {string.Join(", ", missing)} 모드가 설치되지 않았습니다. " +
+                  $"'mods \"{dir}\" --update'로 다시 찾으세요.");
+        }
 
         // 실행을 막지는 않고, 지금 여유 RAM이 부족하면 다른 프로그램을 닫도록 안내만 한다.
         var availableGb = HardwareProbe.Detect().AvailableMemoryGb;

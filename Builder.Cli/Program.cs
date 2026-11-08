@@ -38,6 +38,7 @@ try
         "start" => await Start(cli, service),
         "mods" => await Mods(cli, service, modCatalog, catalog),
         "switch-loader" or "loader" => await SwitchLoader(cli, service),
+        "crossplay" => await CrossplayCommand(cli, service),
         "stats" => Stats(cli, catalog),
         "help" => Help(),
         _ => throw new ArgumentException($"알 수 없는 명령: {cli.Command} ('help'로 목록 확인)"),
@@ -71,6 +72,8 @@ static int Help()
               --no-java-download         필요한 Java가 없어도 자동 설치하지 않음
               --no-mods                  최적화 모드를 자동 설치하지 않음
               --allow-unstable-mods      정식 버전이 없는 모드는 베타·알파 버전 설치 허용
+              --crossplay                베드락판 접속 허용 (Geyser + Floodgate 설치)
+              --bedrock-port <포트>      베드락 접속 포트 (UDP, 기본 19132)
           configure <폴더> [--preset <이름>] [--set <키=값>]... [--unset <키>]...
                                          프리셋·오버라이드 변경 후 server.properties와 시작 스크립트 재생성
                                          (--unset은 오버라이드만 지움. 프리셋에 없는 키는 파일의 현재 값이 유지됨)
@@ -81,6 +84,9 @@ static int Help()
                                          같은 Minecraft 버전에서 Fabric ↔ NeoForge 전환
                                          (빌더 모드는 새 로더용으로 재설치, 사용자 jar 중 이전 로더 전용은
                                           mods-disabled/<로더>/ 로 옮김. 월드가 있으면 백업 후 --confirm 필요)
+          crossplay <폴더> [on|off] [--bedrock-port <포트>]
+                                         베드락판 크로스플레이 켜기·끄기 (Geyser + Floodgate). 인자 없으면 현재 상태
+                                         (포트·Floodgate 인증은 시작 스크립트의 GEYSER_* 환경 변수로 전달. 재시작해야 적용)
           start <폴더> [--no-metrics]     서버 실행 (콘솔 명령 입력 가능, 종료는 'stop' 또는 Ctrl+C)
                                          실행 중 RCON으로 TPS·MSPT·접속자, 프로세스 메모리·CPU를
                                          builder-data/metrics.db에 기록 (주기는 프리셋별, --set metrics.intervalSeconds=초,
@@ -173,13 +179,17 @@ static async Task<int> Create(CommandLine cli, ServerService service, PresetCata
     catalog.Get(presetId);
 
     var modLoader = ModLoaders.Normalize(cli.Option("modloader") ?? AskModLoader());
+    var bedrockPort = BedrockPortOption(cli) ?? Crossplay.DefaultBedrockPort;
     var eula = cli.Flag("accept-eula") || AskEula();
     var (config, modReport) = await service.CreateAsync(
         new CreateServerRequest(dir, cli.Option("mc"), cli.Option("loader"), presetId, overrides, eula,
-            !cli.Flag("no-java-download"), !cli.Flag("no-mods"), cli.Flag("allow-unstable-mods"), modLoader),
+            !cli.Flag("no-java-download"), !cli.Flag("no-mods"), cli.Flag("allow-unstable-mods"), modLoader,
+            cli.Flag("crossplay"), bedrockPort),
         new ConsoleProgress(), ct);
     if (modReport is not null)
         PrintModReport(modReport);
+    if (config.Crossplay.Enabled)
+        PrintCrossplayGuide(config);
 
     var full = Path.GetFullPath(dir);
     Console.WriteLine();
@@ -280,6 +290,68 @@ static async Task<int> SwitchLoader(CommandLine cli, ServerService service)
         PrintModReport(report.Mods);
     Console.WriteLine("새 로더용 모드는 mods 폴더에 직접 넣으세요. 이전 로더로 돌아가면 보관한 jar는 자동으로 되돌아옵니다.");
     return 0;
+}
+
+static async Task<int> CrossplayCommand(CommandLine cli, ServerService service)
+{
+    var dir = cli.RequirePositional(0, "서버 폴더");
+    bool? enabled = cli.Positional.Count > 1
+        ? cli.Positional[1].ToLowerInvariant() switch
+        {
+            "on" or "켜기" => true,
+            "off" or "끄기" => false,
+            var other => throw new ArgumentException($"on 또는 off를 지정하세요: {other}"),
+        }
+        : null;
+    var port = BedrockPortOption(cli);
+
+    ServerInstanceConfig config;
+    if (enabled is null && port is null)
+    {
+        config = ServerInstanceConfig.Load(Path.GetFullPath(dir));
+    }
+    else
+    {
+        (config, var report) = await service.SetCrossplayAsync(dir, enabled, port, !cli.Flag("no-java-download"), new ConsoleProgress());
+        if (report is not null)
+            PrintModReport(report);
+    }
+
+    Console.WriteLine($"크로스플레이: {(config.Crossplay.Enabled ? "켜짐" : "꺼짐")}, 베드락 포트 UDP {config.Crossplay.BedrockPort}");
+    foreach (var id in Crossplay.ModIds)
+    {
+        var mod = config.Mods.FirstOrDefault(m => m.CatalogId == id);
+        Console.WriteLine($"  {id,-10} {(mod is null ? "설치 안 됨" : mod.VersionNumber)}");
+    }
+    if (config.Crossplay.Enabled)
+        PrintCrossplayGuide(config);
+    if (enabled is not null || port is not null)
+        Console.WriteLine("서버를 재시작해야 적용됩니다.");
+    return 0;
+}
+
+static int? BedrockPortOption(CommandLine cli) =>
+    cli.Option("bedrock-port") is not { } text ? null
+    : int.TryParse(text, out var port) && port is > 0 and <= 65535 ? port
+    : throw new ArgumentException($"--bedrock-port 값은 1~65535 사이의 정수여야 합니다: {text}");
+
+/// <summary>크로스플레이 접속에 필요한 네트워크 설정과 알려진 제약을 안내한다. 방화벽·공유기 설정은 바꾸지 않는다.</summary>
+static void PrintCrossplayGuide(ServerInstanceConfig config)
+{
+    var port = config.Crossplay.BedrockPort;
+    Console.WriteLine();
+    Console.WriteLine("크로스플레이 안내:");
+    if (config.Mods.All(m => m.CatalogId != Crossplay.GeyserModId))
+        Console.WriteLine($"  - Geyser가 설치되지 않았습니다. 위 [건너뜀] 이유를 확인하고, 지원 버전이 나오면 'mods --update'로 다시 찾으세요.");
+    Console.WriteLine($"  - 베드락은 UDP {port} 포트로 접속합니다 (Java 접속 포트와 별개).");
+    Console.WriteLine($"    방화벽 허용 예 (관리자 PowerShell): New-NetFirewallRule -DisplayName \"Minecraft Bedrock\" -Direction Inbound -Protocol UDP -LocalPort {port} -Action Allow");
+    Console.WriteLine($"    외부에서 접속하려면 공유기에서 UDP {port} 포트포워딩이 필요합니다.");
+    Console.WriteLine("  - 모바일·Windows 베드락: '서버' 탭에서 주소와 포트를 추가해 접속합니다.");
+    Console.WriteLine("    Xbox·PlayStation·Switch는 서버 주소를 직접 추가할 수 없어 별도 우회 방법이 필요합니다.");
+    Console.WriteLine("  - 베드락 사용자 이름에는 '.' 접두사가 붙습니다. 화이트리스트는 Floodgate의 'fwhitelist' 명령을 쓰세요.");
+    Console.WriteLine("  - 베드락 클라이언트가 업데이트되면 그 버전을 지원하는 Geyser가 필요합니다. 접속이 안 되면 'mods --update'를 실행하세요.");
+    if (Crossplay.IsLightPreset(config.Preset))
+        Console.WriteLine($"  - 주의: '{config.Preset}' 프리셋에서는 베드락 사용자마다 Geyser 변환 부담이 더해져 버벅일 수 있습니다. 'stats'로 MSPT를 확인하세요.");
 }
 
 static int Stats(CommandLine cli, PresetCatalog catalog)

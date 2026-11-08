@@ -58,5 +58,22 @@
       "modrinth": "c2me-fabric",
       "modrinth@neoforge": "c2me-neoforge"
     }
+  },
+  {
+    "id": "geyser",
+    "name": "Geyser",
+    "description": "베드락판 클라이언트 접속 (크로스플레이). 모든 빌드가 베타로 배포되어 베타 허용",
+    "sources": {
+      "modrinth": "geyser"
+    },
+    "allowBeta": true
+  },
+  {
+    "id": "floodgate",
+    "name": "Floodgate",
+    "description": "베드락 사용자를 Java 계정 없이 인증 (크로스플레이, Geyser와 함께 사용)",
+    "sources": {
+      "modrinth": "floodgate"
+    }
   }
 ]

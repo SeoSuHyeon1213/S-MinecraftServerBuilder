@@ -18,6 +18,7 @@
 - 진행 단계: 1차 단계 완료, 작업 2(Modrinth 모드 자동 설치) 완료 — 아래 "작업 2" 섹션 참조
 - 다음 할 일: 작업 3(NeoForge 지원) Windows 빌드·테스트·실서버 검증 → Chunky 청크 사전 생성, 자동 백업(low/minimum 강제)
 - 병행 작업: 작업 4(SQLite 지표 저장, `feature/sqlite-metrics` 브랜치) 1~3단계 완료, 원격 push 완료(2026-10-23). main 병합(PR)은 사용자 결정 대기 — 아래 "작업 4" 섹션 참조
+- 병행 작업: 작업 5(베드락판 크로스플레이, `feature/crossplay` 브랜치 — `feature/sqlite-metrics`에서 분기) 1~3단계 완료, 실제 베드락 접속 검증은 EULA 동의·베드락 클라이언트 필요로 대기 — 아래 "작업 5" 섹션 참조
 - 차단 원인: 없음
 
 ## 1. 사전 확인
@@ -241,3 +242,55 @@
 - [ ] 힙 사용량: RCON으로는 얻을 수 없음 → FabricBridge 단계
 - [ ] 서버 종료 직전 RCON이 먼저 닫혀 "연결이 끊겼습니다" 로그가 한 줄 나옴 (무해, 필요하면 정리)
 - [ ] 서버 백업 기능을 만들 때 `builder-data/`의 포함 여부 결정 (WAL 파일이 있으면 백업 API 또는 체크포인트 후 복사)
+
+---
+
+# 작업 5 — 베드락판 크로스플레이 (2026-10-27, 브랜치 `feature/crossplay`)
+
+## 목표와 범위
+- 목표: Java판 서버에 Geyser + Floodgate를 설치해 베드락판 클라이언트가 Java 계정 없이 접속하게 한다. 프리셋 묶음과 별개로 켜고 끈다.
+- 작업 대상: `Builder.Core/Mods/`(채널 허용), `Builder.Core/Server/Crossplay.cs`(신규), `ServerFiles`, `ServerService`, CLI, `Mods/catalog.json`, 테스트, AGENTS.md·README·설계서 6·8장
+- 완료 조건: `create --crossplay`·`crossplay on|off`로 두 모드가 설치·제거되고, 베드락 포트·Floodgate 인증이 Geyser에 적용되며, 베드락 클라이언트가 실제로 접속된다.
+- 브랜치: 작업 4가 main에 아직 병합되지 않아 `feature/sqlite-metrics` 위에서 분기했다 (CHECKLIST·Program.cs 충돌 방지). 작업 4가 먼저 병합되어야 한다.
+
+## 실행
+- [x] 1단계: 카탈로그 항목별 베타 허용 — `ModCatalogEntry.AllowBeta`, `IModSource.FindLatestAsync`의 `bool allowUnstable` → `ReleaseChannel maxChannel`. 의존성·알파는 서버 `allowUnstableMods`를 따름
+  - 근거: Modrinth의 Geyser 26.3 Fabric 빌드 19개가 모두 `beta` (2026-10-27 API 확인). 기존 규칙이면 항상 건너뜀
+- [x] 2단계: 카탈로그 `geyser`(allowBeta)·`floodgate`, `builder.json`의 `crossplay { enabled, bedrockPort }`(없으면 꺼짐, 스키마 번호는 그대로), `Crossplay.WantedMods`를 모든 모드 동기화(create·configure·switch-loader·mods --update)에 적용, `ServerService.SetCrossplayAsync`
+  - CLI: `create --crossplay [--bedrock-port]`, `crossplay <폴더> [on|off] [--bedrock-port]`(인자 없으면 상태), `--no-mods`와 함께 쓰면 거부, 자동 관리가 꺼진 서버는 켜기 거부
+- [x] 3단계: Geyser 설정을 환경 변수로 전달 — 시작 스크립트(`set` / `export`)와 `start` 프로세스에 `GEYSER_BEDROCK_PORT`, `GEYSER_JAVA_AUTH_TYPE=floodgate`. 포트가 Java 게임 포트·RCON 포트와 같으면 거부. 방화벽 명령 예시·포트포워딩·콘솔 제약·`.` 접두사·`fwhitelist`·Geyser 업데이트 안내 출력, 저·최저 프리셋 경고. `start` 시 크로스플레이가 켜져 있는데 모드가 없으면 경고
+  - 설정 파일 대신 환경 변수를 쓴 이유: Geyser 2.12는 config.yml을 코드에서 생성하고 버전마다 마이그레이션함(`config-version: 11`). 환경 변수 덮어쓰기(`EnvironmentOverrides`, `GEYSER_` + 경로 대문자)는 파일에 기록되지 않아 사용자 편집과 충돌하지 않음
+- [ ] 4단계: 실제 베드락 클라이언트 접속 — 아래 남은 작업
+
+## 검증 기록
+| 확인 항목 | 명령 또는 방법 | 결과 | 미실행·실패 이유 |
+|---|---|---|---|
+| Modrinth 지원 현황 | API `projects?ids=["geyser","floodgate"]`, 26.3 Fabric 버전 목록 | 둘 다 Fabric·NeoForge, 서버 전용, MIT. Geyser 2.12.1-b1273(beta, 필수 의존성 1개), Floodgate 2.2.7-b69(release) | |
+| 빌드 | `dotnet build MinecraftHybridBuilder.slnx` | 통과 (경고 0, 오류 0) | |
+| 단위 테스트 | `dotnet test MinecraftHybridBuilder.slnx` | 통과 (Core 106/106, Storage 49/49). 추가: 채널 선택 1, 설치기 2(항목별 베타·끄면 제거), `CrossplayTests` 5 | |
+| 실제 생성 | `mchb create servers/e2e-xplay --modloader fabric --preset medium --set jvm.heapMb=1536 --set metrics.intervalSeconds=0 --crossplay --accept-eula` | 통과: Lithium·FerriteCore·Krypton·spark·Chunky·fabric-api + Geyser 2.12.1-b1273(beta)·Floodgate 2.2.7-b69 설치, 안내 출력 | |
+| 모드 로드·호환 | eula=false로 바꾼 뒤 같은 Java·인자 + 환경 변수로 직접 실행 | 통과: 100개(내장 포함) 모드 로드, Geyser·Floodgate·Krypton·Lithium 함께 로드, ERROR 없음. 로그 `Config option [bedrock, port] set from environment variable GEYSER_BEDROCK_PORT`, `[java, auth-type] ... GEYSER_JAVA_AUTH_TYPE` | EULA 대리 동의를 피하려고 서버 시작·월드 생성은 안 함 |
+| auth-type 기본값 | 생성된 `config/Geyser-Fabric/config.yml` | `java.auth-type: online` → 환경 변수로 floodgate 지정하도록 수정 | |
+| crossplay 명령 | `--bedrock-port 25565`(거부, 종료 코드 1), `--bedrock-port 19140`, `off`, `on`, 상태 | 통과: 스크립트에 환경 변수 반영·제거, off 시 Geyser·Floodgate만 제거(fabric-api 유지), on 시 재설치 | |
+| 잘못된 조합 | `create --crossplay --no-mods` | 통과: 거부, 폴더 미생성 | |
+| 실제 베드락 접속 | 베드락 클라이언트로 접속 | 미실행 | EULA 동의 실행과 베드락 클라이언트 필요 |
+| NeoForge | NeoForge 서버에서 crossplay | 미실행 | NeoForge 실서버 자체가 미검증(작업 3) |
+| Linux start.sh | `export` 줄 동작 | 미실행 | Linux 환경 없음 (단위 테스트로 내용만 확인) |
+
+시험 서버 `servers/e2e-xplay`(eula=false, 크로스플레이 켜짐, 포트 19140)는 실제 접속 검증용으로 남겨 두었다. `servers/`는 .gitignore 대상이다.
+
+## 주요 결정
+- 결정: 베타 허용은 서버 전체가 아니라 카탈로그 항목별로 한다. 이유: `--allow-unstable-mods`를 켜면 C2ME 알파까지 설치됨.
+- 결정: 크로스플레이 모드는 프리셋 묶음에 넣지 않는다. 이유: 성능 프리셋과 기능 선택은 별개이며, 베드락 사용자가 없으면 불필요한 부담.
+- 결정: Geyser 설정은 환경 변수로만 넘긴다. 이유: 위 3단계 참조. 설정 파일 형식이 바뀌어도 영향 없음.
+- 결정: 방화벽 규칙은 자동으로 추가하지 않고 명령 예시만 보여 준다. 이유: 시스템 설정 변경이며 관리자 권한이 필요함.
+
+## 관찰
+- Geyser·Floodgate가 있으면 EULA 거부 메시지 뒤에도 JVM이 끝나지 않았다(90·240초 제한 시간까지 대기). 작업 1 기록(Geyser 없음)에서는 EULA 안내 후 정상 종료됐음. `mchb start`는 실행 전에 EULA를 확인하므로 일반 사용에는 영향이 없지만, 원인은 미확인.
+
+## 남은 작업
+- [ ] 실제 베드락 접속: 사용자가 EULA에 동의한 서버에서 `mchb start` → Windows 베드락 클라이언트로 `localhost:19140` 접속, Floodgate 인증(`.` 접두사), 이동·채팅·블록 상호작용 확인. 환경에 따라 루프백 제한이 있을 수 있음
+- [ ] 실서버 MSPT·메모리: 베드락 접속자 유무로 `stats` 비교 후 저·최저 프리셋 경고 기준 보완
+- [ ] NeoForge 서버에서 크로스플레이 확인
+- [ ] (선택) `start` 시 Geyser 새 버전 자동 확인 — 베드락 클라이언트 자동 업데이트 대응
+- [ ] (선택) 콘솔(Xbox·PS·Switch) 접속 우회 방법 안내 문서

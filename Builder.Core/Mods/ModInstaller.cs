@@ -18,6 +18,12 @@ public sealed class ModCatalogEntry
 
     public bool Supports(string loader) => Loaders.Count == 0 || Loaders.Contains(loader, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// 정식(release) 버전을 내지 않고 모든 빌드를 베타로 배포하는 모드(예: Geyser)면 true.
+    /// 이 모드만 베타를 허용하며, 알파와 필수 의존성의 채널은 서버 설정(allowUnstableMods)을 따른다.
+    /// </summary>
+    public bool AllowBeta { get; init; }
+
     /// <summary>로더별로 프로젝트가 다른 모드는 "소스@로더" 키를 먼저 찾는다 (예: "modrinth@neoforge": "c2me-neoforge").</summary>
     public string? ProjectIdFor(string source, string loader) =>
         Sources.TryGetValue($"{source}@{loader}", out var specific) ? specific
@@ -119,7 +125,7 @@ public sealed class ModInstaller(HttpClient http, ModCatalog catalog, IReadOnlyL
             if (mod.CatalogId is not null && !wanted.Contains(mod.CatalogId))
             {
                 File.Delete(Path.Combine(modsDir, mod.FileName));
-                report.Removed.Add(new(mod.Name, $"{mod.VersionNumber} (프리셋에서 제외됨)"));
+                report.Removed.Add(new(mod.Name, $"{mod.VersionNumber} (프리셋·크로스플레이 구성에서 제외됨)"));
                 continue;
             }
             result.Add(mod);
@@ -161,7 +167,7 @@ public sealed class ModInstaller(HttpClient http, ModCatalog catalog, IReadOnlyL
             if (entry.ProjectIdFor(source.Name, config.Loader) is not { } projectId)
                 continue;
 
-            var (root, failure) = await LookupAsync(source, projectId, config, ct);
+            var (root, failure) = await LookupAsync(source, projectId, config, MaxChannel(config, entry), ct);
             if (root is null)
             {
                 lastFailure = failure;
@@ -183,7 +189,7 @@ public sealed class ModInstaller(HttpClient http, ModCatalog catalog, IReadOnlyL
                     if (!update && managed.Any(m => m.Key == key))
                         continue;
 
-                    var (dependency, dependencyFailure) = await LookupAsync(source, dependencyId, config, ct);
+                    var (dependency, dependencyFailure) = await LookupAsync(source, dependencyId, config, MaxChannel(config, null), ct);
                     if (dependency is null)
                         return $"필수 의존성 {dependencyId}: {dependencyFailure}";
 
@@ -203,12 +209,18 @@ public sealed class ModInstaller(HttpClient http, ModCatalog catalog, IReadOnlyL
         return lastFailure ?? "지원하는 모드 소스가 없음";
     }
 
+    /// <summary>설치를 허용할 가장 불안정한 채널. 서버 설정이 알파까지 허용하면 그것을, 아니면 카탈로그 항목이 허용한 베타까지.</summary>
+    private static ReleaseChannel MaxChannel(ServerInstanceConfig config, ModCatalogEntry? entry) =>
+        config.AllowUnstableMods ? ReleaseChannel.Alpha
+        : entry is { AllowBeta: true } ? ReleaseChannel.Beta
+        : ReleaseChannel.Release;
+
     private async Task<(ModRelease? Release, string? Failure)> LookupAsync(
-        IModSource source, string projectId, ServerInstanceConfig config, CancellationToken ct)
+        IModSource source, string projectId, ServerInstanceConfig config, ReleaseChannel maxChannel, CancellationToken ct)
     {
         try
         {
-            var result = await source.FindLatestAsync(projectId, config.MinecraftVersion, config.Loader, config.AllowUnstableMods, ct);
+            var result = await source.FindLatestAsync(projectId, config.MinecraftVersion, config.Loader, maxChannel, ct);
             if (result.Release is not null)
                 return (result.Release, null);
             var target = $"Minecraft {config.MinecraftVersion} {ModLoaders.DisplayName(config.Loader)}";

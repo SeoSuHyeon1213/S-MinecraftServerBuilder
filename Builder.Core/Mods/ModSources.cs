@@ -27,7 +27,7 @@ public sealed record ModRelease(
     string PageUrl);
 
 /// <param name="Release">조건에 맞는 파일. 없으면 null.</param>
-/// <param name="OnlyUnstableAvailable">정식 버전은 없고 알파·베타만 있어서 찾지 못한 경우.</param>
+/// <param name="OnlyUnstableAvailable">허용한 채널의 버전은 없고 그보다 불안정한 버전(알파·베타)만 있어서 찾지 못한 경우.</param>
 public sealed record ModLookupResult(ModRelease? Release, bool OnlyUnstableAvailable);
 
 /// <summary>
@@ -41,10 +41,10 @@ public interface IModSource
 
     /// <summary>
     /// 게임 버전·로더에 맞는 가장 적합한 파일을 찾는다. 정식 버전을 우선하고,
-    /// <paramref name="allowUnstable"/>이 true일 때만 베타 → 알파 순으로 대신 고른다.
+    /// 정식 버전이 없으면 <paramref name="maxChannel"/>까지 베타 → 알파 순으로 대신 고른다.
     /// </summary>
     Task<ModLookupResult> FindLatestAsync(
-        string projectId, string gameVersion, string loader, bool allowUnstable, CancellationToken ct = default);
+        string projectId, string gameVersion, string loader, ReleaseChannel maxChannel, CancellationToken ct = default);
 }
 
 public sealed class ModrinthSource(HttpClient http) : IModSource
@@ -60,7 +60,7 @@ public sealed class ModrinthSource(HttpClient http) : IModSource
     public string Name => SourceName;
 
     public async Task<ModLookupResult> FindLatestAsync(
-        string projectId, string gameVersion, string loader, bool allowUnstable, CancellationToken ct = default)
+        string projectId, string gameVersion, string loader, ReleaseChannel maxChannel, CancellationToken ct = default)
     {
         var url = $"{ApiBase}/project/{Uri.EscapeDataString(projectId)}/version" +
                   $"?loaders={Uri.EscapeDataString($"[\"{loader}\"]")}" +
@@ -71,11 +71,11 @@ public sealed class ModrinthSource(HttpClient http) : IModSource
             throw new InvalidOperationException($"Modrinth에 없는 프로젝트입니다: {projectId}");
         response.EnsureSuccessStatusCode();
 
-        return SelectBest(await response.Content.ReadAsStringAsync(ct), allowUnstable);
+        return SelectBest(await response.Content.ReadAsStringAsync(ct), maxChannel);
     }
 
     /// <summary>Modrinth 버전 목록 JSON에서 설치할 파일을 고른다. 네트워크 없이 테스트할 수 있도록 분리했다.</summary>
-    public static ModLookupResult SelectBest(string versionsJson, bool allowUnstable)
+    public static ModLookupResult SelectBest(string versionsJson, ReleaseChannel maxChannel)
     {
         var versions = (JsonSerializer.Deserialize<List<VersionDto>>(versionsJson, Json) ?? [])
             .Where(v => v.Files is { Count: > 0 })
@@ -83,7 +83,7 @@ public sealed class ModrinthSource(HttpClient http) : IModSource
             .ToList();
 
         var pick = versions
-            .Where(v => allowUnstable || v.Channel == ReleaseChannel.Release)
+            .Where(v => v.Channel <= maxChannel)
             .OrderBy(v => v.Channel)
             .ThenByDescending(v => v.Dto.DatePublished)
             .FirstOrDefault();

@@ -35,7 +35,7 @@ public class ModrinthSelectionTests
     [Fact]
     public void PrefersNewestReleaseOverNewerAlpha()
     {
-        var release = ModrinthSource.SelectBest(Versions, allowUnstable: true).Release!;
+        var release = ModrinthSource.SelectBest(Versions, ReleaseChannel.Alpha).Release!;
         Assert.Equal("rel1", release.VersionId);
         Assert.Equal("mod-1.5.jar", release.FileName);
         Assert.Equal(new FileHash("sha512", "bb"), release.Hash);
@@ -50,15 +50,32 @@ public class ModrinthSelectionTests
             [ { "id": "a", "project_id": "P", "version_number": "0.1", "version_type": "alpha", "date_published": "2026-10-01T00:00:00Z",
                 "files": [ { "hashes": { "sha512": "x" }, "url": "https://cdn/a.jar", "filename": "a.jar", "primary": true } ] } ]
             """;
-        var denied = ModrinthSource.SelectBest(alphaOnly, allowUnstable: false);
+        var denied = ModrinthSource.SelectBest(alphaOnly, ReleaseChannel.Release);
         Assert.Null(denied.Release);
         Assert.True(denied.OnlyUnstableAvailable);
 
-        Assert.Equal(ReleaseChannel.Alpha, ModrinthSource.SelectBest(alphaOnly, allowUnstable: true).Release!.Channel);
+        Assert.Equal(ReleaseChannel.Alpha, ModrinthSource.SelectBest(alphaOnly, ReleaseChannel.Alpha).Release!.Channel);
 
-        var none = ModrinthSource.SelectBest("[]", allowUnstable: false);
+        var none = ModrinthSource.SelectBest("[]", ReleaseChannel.Release);
         Assert.Null(none.Release);
         Assert.False(none.OnlyUnstableAvailable);
+    }
+
+    [Fact]
+    public void BetaLimitTakesBetaButNotAlpha()
+    {
+        const string unstable = """
+            [ { "id": "a", "project_id": "P", "version_number": "3.0-a", "version_type": "alpha", "date_published": "2026-10-03T00:00:00Z",
+                "files": [ { "hashes": { "sha512": "x" }, "url": "https://cdn/a.jar", "filename": "a.jar", "primary": true } ] },
+              { "id": "b", "project_id": "P", "version_number": "2.12-b", "version_type": "beta", "date_published": "2026-10-01T00:00:00Z",
+                "files": [ { "hashes": { "sha512": "y" }, "url": "https://cdn/b.jar", "filename": "b.jar", "primary": true } ] } ]
+            """;
+        Assert.Equal("b", ModrinthSource.SelectBest(unstable, ReleaseChannel.Beta).Release!.VersionId);
+        Assert.Equal("b", ModrinthSource.SelectBest(unstable, ReleaseChannel.Alpha).Release!.VersionId); // 같은 조건이면 덜 불안정한 쪽
+
+        var alphaOnly = ModrinthSource.SelectBest(unstable.Replace("\"beta\"", "\"alpha\""), ReleaseChannel.Beta);
+        Assert.Null(alphaOnly.Release);
+        Assert.True(alphaOnly.OnlyUnstableAvailable);
     }
 }
 
@@ -74,6 +91,8 @@ public class ModInstallerTests : IDisposable
         new ModCatalogEntry { Id = "chunky", Name = "Chunky", Sources = { ["fake"] = "chunky" } },
         new ModCatalogEntry { Id = "c2me", Name = "C2ME", Sources = { ["fake"] = "c2me" } },
         new ModCatalogEntry { Id = "modernfix", Name = "ModernFix", Sources = { ["fake"] = "modernfix" } },
+        new ModCatalogEntry { Id = "geyser", Name = "Geyser", Sources = { ["fake"] = "geyser" }, AllowBeta = true },
+        new ModCatalogEntry { Id = "floodgate", Name = "Floodgate", Sources = { ["fake"] = "floodgate" } },
     ]);
 
     public void Dispose() => Directory.Delete(dir, recursive: true);
@@ -123,7 +142,6 @@ public class ModInstallerTests : IDisposable
     {
         Publish("lithium", "1.0", "lithium");
         Publish("c2me", "0.4", "c2me", ReleaseChannel.Alpha);
-        source.UnstableOnly.Add("c2me");
         Publish("chunky", "1.5", "chunky", deps: ["fabric-api"]); // fabric-api 미등록
         var config = Config();
 
@@ -139,11 +157,55 @@ public class ModInstallerTests : IDisposable
     public async Task InstallsUnstableWhenAllowed()
     {
         Publish("c2me", "0.4", "c2me", ReleaseChannel.Alpha);
-        source.UnstableOnly.Add("c2me");
 
         var report = await Installer().SyncAsync(dir, Config(allowUnstable: true), ["c2me"], update: true);
 
         Assert.Contains("(alpha)", Assert.Single(report.Installed).Detail);
+    }
+
+    [Fact]
+    public async Task CatalogBetaAllowanceAppliesOnlyToThatMod()
+    {
+        Publish("geyser", "2.12.1-b1273", "geyser", ReleaseChannel.Beta, deps: ["fabric-api"]);
+        Publish("fabric-api", "0.200-beta", "fabric-api", ReleaseChannel.Beta);
+        Publish("floodgate", "2.2.7-b69", "floodgate");
+        Publish("chunky", "2.0-beta", "chunky", ReleaseChannel.Beta);
+        var config = Config();
+
+        var report = await Installer().SyncAsync(dir, config, ["geyser", "floodgate", "chunky"], update: true);
+
+        // Geyser 자체는 베타를 허용하지만, 베타뿐인 의존성은 서버 설정(정식만)을 따라 건너뛴다.
+        Assert.Contains(report.Skipped, s => s.Name == "Geyser" && s.Detail.Contains("필수 의존성 fabric-api"));
+        Assert.Contains(report.Skipped, s => s.Name == "Chunky" && s.Detail.Contains("알파·베타"));
+        Assert.Equal(["floodgate-2.2.7-b69.jar"], Mods.Jars);
+
+        Publish("fabric-api", "0.200", "fabric-api");
+        report = await Installer().SyncAsync(dir, config, ["geyser", "floodgate", "chunky"], update: true);
+
+        Assert.Contains(report.Installed, i => i.Name == "Geyser" && i.Detail.Contains("(beta)"));
+        Assert.Contains("geyser-2.12.1-b1273.jar", Mods.Jars);
+        Assert.Equal(ReleaseChannel.Beta, source.MaxChannels["geyser"]);
+        Assert.Equal(ReleaseChannel.Release, source.MaxChannels["fabric-api"]);
+        Assert.Equal(ReleaseChannel.Release, source.MaxChannels["chunky"]);
+    }
+
+    [Fact]
+    public async Task TurningCrossplayOffRemovesItsModsButKeepsDependencies()
+    {
+        Publish("lithium", "1.0", "lithium");
+        Publish("geyser", "2.12", "geyser", ReleaseChannel.Beta, deps: ["fabric-api"]);
+        Publish("fabric-api", "0.200", "fabric-api");
+        Publish("floodgate", "2.2.7", "floodgate");
+        var config = Config();
+        config.Crossplay.Enabled = true;
+        await Installer().SyncAsync(dir, config, Crossplay.WantedMods(["lithium"], config), update: true);
+        Assert.Equal(["fabric-api-0.200.jar", "floodgate-2.2.7.jar", "geyser-2.12.jar", "lithium-1.0.jar"], Mods.Jars);
+
+        config.Crossplay.Enabled = false;
+        var report = await Installer().SyncAsync(dir, config, Crossplay.WantedMods(["lithium"], config), update: false);
+
+        Assert.Equal(["Floodgate", "Geyser"], report.Removed.Select(r => r.Name).Order());
+        Assert.Equal(["fabric-api-0.200.jar", "lithium-1.0.jar"], Mods.Jars);
     }
 
     [Fact]
@@ -239,6 +301,15 @@ public class ModInstallerTests : IDisposable
         Assert.DoesNotContain("c2me", presets.Get("low").Mods);
         Assert.DoesNotContain("c2me", presets.Get("minimum").Mods);
         Assert.All(mods.All, m => Assert.True(m.Sources.ContainsKey(ModrinthSource.SourceName)));
+
+        // 크로스플레이 모드는 프리셋 묶음이 아니라 crossplay 설정으로만 설치한다. Geyser는 베타로만 배포된다 (2026-10-27 확인).
+        foreach (var id in Crossplay.ModIds)
+        {
+            Assert.Contains(mods.All, m => m.Id == id);
+            Assert.All(presets.All, p => Assert.DoesNotContain(id, p.Mods));
+        }
+        Assert.True(mods.Get("geyser").AllowBeta);
+        Assert.False(mods.Get("floodgate").AllowBeta);
     }
 
     private static byte[] Jar(string fabricId, string version)
@@ -259,19 +330,21 @@ public class ModInstallerTests : IDisposable
             : [];
     }
 
+    /// <summary>프로젝트마다 버전 하나만 있는 가짜 소스. 그 버전의 채널이 허용 범위를 넘으면 "불안정 버전만 있음"으로 답한다.</summary>
     private sealed class FakeSource : IModSource
     {
         public Dictionary<string, ModRelease> Releases { get; } = [];
-        public HashSet<string> UnstableOnly { get; } = [];
         public List<string> Lookups { get; } = [];
+        public Dictionary<string, ReleaseChannel> MaxChannels { get; } = [];
         public string Name => "fake";
 
-        public Task<ModLookupResult> FindLatestAsync(string projectId, string gameVersion, string loader, bool allowUnstable, CancellationToken ct)
+        public Task<ModLookupResult> FindLatestAsync(string projectId, string gameVersion, string loader, ReleaseChannel maxChannel, CancellationToken ct)
         {
             Lookups.Add(projectId);
+            MaxChannels[projectId] = maxChannel;
             if (!Releases.TryGetValue(projectId, out var release))
                 return Task.FromResult(new ModLookupResult(null, false));
-            if (UnstableOnly.Contains(projectId) && !allowUnstable)
+            if (release.Channel > maxChannel)
                 return Task.FromResult(new ModLookupResult(null, true));
             return Task.FromResult(new ModLookupResult(release, false));
         }
