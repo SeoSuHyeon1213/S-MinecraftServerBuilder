@@ -17,6 +17,8 @@ PC 사양에 맞는 경량화 프리셋을 고르고, 필요한 Java·Fabric·�
 - **최적화 모드 자동 설치**: [Modrinth](https://modrinth.com)에서 서버 버전에 맞는 모드와 필수 의존성을 설치합니다. 맞는 버전이 없는 모드는 건너뛰고 이유를 알려 줍니다. 사용자가 직접 넣은 모드는 건드리지 않습니다.
 - **베드락판 크로스플레이**: `--crossplay` 또는 `crossplay <폴더> on`으로 [Geyser](https://geysermc.org)와 Floodgate를 설치해 모바일·Windows 베드락 사용자가 Java 계정 없이 접속하게 합니다. 아래 "크로스플레이" 참고.
 
+- **관리 창 (Windows)**: `mchb-gui`로 서버를 콘솔 창 없이 실행하고, 상태(TPS·MSPT·메모리·CPU)와 접속자를 보며 명령·강퇴·OP·화이트리스트를 다룹니다. 창을 닫으면 월드를 저장하고 서버를 끈 뒤에 닫힙니다. 아래 "관리 창" 참고.
+
 ## 필요 환경
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
@@ -67,6 +69,19 @@ dotnet run --project Builder.Cli -- stats servers/my-server --since 1h
 | `stats <폴더>` | 지표 요약과 성능 판정 (`--since 30m`/`6h`/`2d`, `--recent`, `--events`) |
 
 자세한 옵션은 `dotnet run --project Builder.Cli -- help`로 확인할 수 있습니다.
+
+## 관리 창 (Windows)
+
+```bash
+dotnet run --project Builder.Gui -- servers/my-server
+```
+
+- 서버는 `create`로 먼저 만듭니다. 관리 창은 이미 만든 서버 폴더를 열어 실행·관리합니다 (마지막으로 연 폴더를 기억).
+- **안전 종료**: "저장 후 종료" 버튼이나 창 닫기(X)는 서버에 `stop`을 보내 월드를 저장한 뒤 끝냅니다. 60초가 지나도 끝나지 않으면 계속 기다릴지, 강제 종료할지 묻습니다 (강제 종료는 마지막 저장 이후 변경이 사라질 수 있음). Windows 종료·로그오프 때도 저장이 끝날 때까지 종료 화면에 이유를 표시합니다.
+- **상태**: 메모리·CPU는 2초마다, TPS·MSPT는 프리셋의 지표 수집 주기마다 갱신됩니다. 지표는 `start`와 같은 방식으로 `builder-data/metrics.db`에도 기록됩니다.
+- **접속자**: 서버 출력의 접속·퇴장 메시지로 바로 갱신하고, 지표 수집 때마다 `/list`로 다시 맞춥니다. 이름을 고르거나 입력해 강퇴·OP·화이트리스트를 다룹니다 (베드락 플레이어는 이름 앞에 `.`).
+- **콘솔**: 서버 출력을 보고 명령을 입력합니다 (↑/↓로 이전 명령).
+- 작업 관리자로 관리 창을 강제로 끝내면 서버는 저장 없이 끝나지 않고 계속 실행됩니다. 이때는 Minecraft 클라이언트에서 `/stop`(OP 필요)으로 끄세요.
 
 ## 경량화 프리셋
 

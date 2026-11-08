@@ -19,6 +19,7 @@
 - 다음 할 일: 작업 3(NeoForge 지원) Windows 빌드·테스트·실서버 검증 → Chunky 청크 사전 생성, 자동 백업(low/minimum 강제)
 - 병행 작업: 작업 4(SQLite 지표 저장, `feature/sqlite-metrics` 브랜치) 1~3단계 완료, 원격 push 완료(2026-10-23). main 병합(PR)은 사용자 결정 대기 — 아래 "작업 4" 섹션 참조
 - 병행 작업: 작업 5(베드락판 크로스플레이, `feature/crossplay` 브랜치 — `feature/sqlite-metrics`에서 분기) 1~3단계 완료, 실제 베드락 접속 검증은 EULA 동의·베드락 클라이언트 필요로 대기 — 아래 "작업 5" 섹션 참조
+- 병행 작업: 작업 7(Windows 서버 관리 창, `feature/server-gui` 브랜치 — `feature/crossplay`에서 분기) — 아래 "작업 7" 섹션 참조
 - 차단 원인: 없음
 
 ## 1. 사전 확인
@@ -294,3 +295,54 @@
 - [ ] NeoForge 서버에서 크로스플레이 확인
 - [ ] (선택) `start` 시 Geyser 새 버전 자동 확인 — 베드락 클라이언트 자동 업데이트 대응
 - [ ] (선택) 콘솔(Xbox·PS·Switch) 접속 우회 방법 안내 문서
+
+---
+
+# 작업 7 — Windows 서버 관리 창 (2026-11-08, 브랜치 `feature/server-gui`)
+
+## 목표와 범위
+- 배경: 다른 PC 테스트에서 (1) 서버 상태·접속자를 확인하기 어렵고 (2) 저장 전에 터미널 창을 닫아 버릴 수 있는 문제 (사용자 보고).
+- 목표: 서버를 콘솔 창 없이 실행하고, 시작·저장 후 종료·상태·접속자·콘솔 명령·접속자 관리(강퇴·OP·화이트리스트)를 창에서 한다. 창을 닫으면 월드를 저장하고 서버가 끝난 뒤 닫힌다.
+- 결정(사용자 선택): WinForms(외부 패키지 없음, Windows 전용), 기능 4가지 모두, 크로스플레이 변경을 먼저 커밋(`aabdd53`)한 뒤 `feature/crossplay`에서 분기.
+- 작업 대상: `Builder.Core/Server/`(StartManagedAsync, RunningServer, ServerConsole), `Builder.Storage/Collection/MetricsCollector.cs`(실시간 값 전달), `Builder.Gui/`(신규), 테스트, README·AGENTS.md·설계서
+- 완료 조건: 실서버를 관리 창으로 시작하고, 상태·접속자가 표시되며, 창 닫기로 월드 저장 후 종료된다.
+
+## 실행
+- [x] `ServerService`: 실행 준비를 `PrepareLaunchAsync`로 분리(CLI `RunAsync` 동작 유지), `StartManagedAsync` 추가 — 표준 입출력 리다이렉트, 콘솔 창 없음, `-Dstdout.encoding=UTF-8`·`-Dstderr.encoding=UTF-8`
+- [x] `RunningServer`: 출력 전달, 명령 보내기(한 줄만), `StopAsync`(stop 한 번 + 제한 시간 대기), `Kill`(사용자가 고를 때만), 모니터 취소
+- [x] `ServerConsole`: 접속·퇴장·`Done`·`Stopping` 해석(바닐라·Fabric·NeoForge 줄 머리, 채팅 오인 방지), 명령 정리, 플레이어 이름 검사와 강퇴·OP·화이트리스트 명령
+- [x] `MetricsCollector`: `observe` 콜백으로 수집 값(`LiveMetrics`) 전달, 콜백 예외는 로그만
+- [x] `Builder.Gui` (`mchb-gui`): 폴더 선택, 시작, 지금 저장, 저장 후 종료(60초마다 계속 기다릴지/강제 종료 묻기), 창 닫기 시 확인 후 저장·종료, Windows 종료 시 `ShutdownBlockReasonCreate`, 상태(가동 시간·TPS·MSPT·RSS/힙·CPU·접속자), 접속자 목록·관리 버튼(OP는 확인), 콘솔(출력 30만 자 상한, 명령 기록 ↑/↓), 마지막 폴더 기억(`<데이터 폴더>/gui.json`), EULA 미동의 시 안내만
+- [x] 테스트: `ServerConsoleTests`(해석·명령·이름 25개), `RunningServerTests`(가짜 PowerShell 서버로 stop·출력·모니터 취소, 멈춘 서버 Kill), 수집기 observe 1개
+- [x] README "관리 창", AGENTS.md(디렉터리·명령·규칙), 설계서 5장 구조
+
+## 검증 기록
+| 확인 항목 | 명령 또는 방법 | 결과 | 미실행·실패 이유 |
+|---|---|---|---|
+| 빌드 | `dotnet build MinecraftHybridBuilder.slnx` | 통과 (경고 0, 오류 0) | |
+| 단위 테스트 | `dotnet test MinecraftHybridBuilder.slnx --no-build` (실서버 수정 후 재실행) | 통과 (Core 133/133, Storage 50/50) | |
+| 창 표시 | `mchb-gui.exe servers\e2e-xplay` 실행 후 창 이미지 확인, 창 닫기 | 통과: 배치·한글 표시 정상, 중지 상태 버튼 비활성화 정상, 메모리 약 55MB, 닫기 정상 | |
+| 실서버 시작·상태 | `servers/e2e-xplay`(EULA는 2026-10-27 동의 기록 있음, 사용자 검증 승인)를 관리 창으로 시작, UI 자동화로 조작 | 통과: 16~30초 후 `Done` → "실행 중", 가동 시간·메모리(약 1.9GB/힙 1.5GB)·CPU 2초 갱신, 접속자 `0 / 12`(server.properties), 지표 꺼진 서버라 TPS·MSPT "수집 꺼짐", 한글 출력(Geyser·Floodgate) 정상 | |
+| 콘솔 명령·지금 저장 | 명령 `list`, "지금 저장" 버튼 | 통과: 서버 로그에 `There are 0 of a max of 12`, `Saved the game` | |
+| 저장 후 종료 버튼 | "저장 후 종료" | 통과: `stop` → `Saving worlds`·청크 저장 → 2초 만에 종료 코드 0, 창은 열린 채 "중지됨" | |
+| 창 닫기(X) | `SC_CLOSE` 보냄 → 확인 대화 상자 | 통과: 대화 상자에서 확인 후 `stop` → 저장 → 창 닫힘. 자동화 스크립트가 대화 상자를 찾지 못해 화면에서 직접 누른 것으로 보임 (닫기 후 20초·3분 뒤 stop) | 대화 상자 자동 클릭은 미확인 |
+| 창 닫기(WM_CLOSE, 확인 없이) | `CloseMainWindow` | 통과: 확인 없이 `stop` → 저장 → 창 닫힘 (CloseReason.None) | |
+| 실서버에서 찾은 버그 | 콘솔 화면 | 수정: TextBox 기본 `MaxLength` 32,767자가 `AppendText`에도 적용돼, 모드 109개 서버의 시작 로그 이후 출력이 붙지 않음 → `MaxLength` 상향 후 재확인 통과 | |
+| 상태 칸 배치 | 창 이미지 | 수정: "수집 꺼짐" 긴 문구가 줄바꿈돼 접속자 행이 가려짐 → 문구 축소·자동 크기 | |
+| 실제 플레이어 접속 | 클라이언트 접속 후 목록·강퇴 | 미실행 | 클라이언트 필요 |
+
+## 주요 결정
+- 결정: 관리 창이 비정상 종료돼도 서버를 함께 죽이지 않는다 (Job Object 미사용). 이유: 저장 없는 종료보다 계속 실행이 월드에 안전. 다시 끄는 방법은 README에 안내.
+- 결정: 접속자 목록은 콘솔 출력 해석으로 즉시 갱신하고 `/list`(지표 수집 주기)로 다시 맞춘다. 이유: 최저 프리셋은 수집 주기가 60초라 `/list`만으로는 늦음. 콘솔 해석은 추가 명령 없이 동작.
+- 결정: 메모리·CPU는 창이 2초마다 직접 잰다. 이유: OS 조회라 서버 부담이 없고, TPS는 서버 명령이 필요하므로 프리셋 주기를 따른다.
+
+## 관찰
+- 서버 시작 시 OSHI 라이브러리가 Windows 성능 카운터 레지스트리를 읽지 못해 ERROR와 스택 추적을 남긴다 (`Unable to locate English counter names in registry Perflib 009`). 이 PC 환경 문제로 이번 변경과 무관하며 서버는 정상 동작.
+
+## 남은 작업
+- [x] 실서버 검증 (2026-11-08, 위 검증 기록)
+- [x] 커밋: `feature/server-gui` (2026-11-08, 원격 push 안 함. 스킬 폴더 이동(`.claude/`, `SKILL.en.md` 삭제)은 포함하지 않음)
+- [ ] TPS·MSPT 표시: 지표 수집이 켜진 서버(`metrics.intervalSeconds` > 0)에서 확인 — 시험 서버는 꺼져 있음
+- [ ] 실제 클라이언트 접속으로 접속자 목록·강퇴·OP 확인 (Java·베드락)
+- [ ] (선택) 관리 창에서 서버 만들기·설정 바꾸기(프리셋·크로스플레이) — 지금은 CLI
+- [ ] (선택) 이미 실행 중인 서버 감지 (같은 폴더를 CLI와 창에서 동시에 실행하면 world session.lock 오류)

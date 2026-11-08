@@ -5,5 +5,6 @@
   </Folder>
   <Project Path="Builder.Cli/Builder.Cli.csproj" />
   <Project Path="Builder.Core/Builder.Core.csproj" />
+  <Project Path="Builder.Gui/Builder.Gui.csproj" />
   <Project Path="Builder.Storage/Builder.Storage.csproj" />
 </Solution>

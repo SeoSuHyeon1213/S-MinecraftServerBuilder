@@ -50,6 +50,9 @@ public sealed class ProcessProbe(Process process, TimeProvider? time = null)
     }
 }
 
+/// <summary>한 번 수집한 값. 관리 창 같은 실시간 표시에 넘긴다. 얻지 못한 값은 null이다.</summary>
+public sealed record LiveMetrics(DateTimeOffset Timestamp, TickStatus? Tick, ProcessSnapshot? Process, PlayerList? Players);
+
 /// <summary>
 /// 서버 실행 중 주기적으로 지표를 모아 <see cref="MetricsWriter"/>로 보낸다.
 /// TPS·MSPT는 바닐라 <c>/tick query</c>, 없으면 spark <c>/spark tps</c>를 쓰고, 접속자는 <c>/list</c>로 얻는다.
@@ -64,6 +67,7 @@ public sealed class MetricsCollector
     private readonly Func<ProcessSnapshot?> probe;
     private readonly TimeProvider time;
     private readonly Action<string> log;
+    private readonly Action<LiveMetrics>? observe;
 
     private IRconSession? session;
     private bool rconDisabled;
@@ -73,13 +77,15 @@ public sealed class MetricsCollector
     private HashSet<string>? lastPlayers;
 
     /// <param name="connect">null이면 RCON 없이 프로세스 지표만 모은다.</param>
+    /// <param name="observe">수집할 때마다 받는다. 예외가 나도 수집은 계속한다.</param>
     public MetricsCollector(MetricsWriter writer, Func<CancellationToken, Task<IRconSession>>? connect,
-        Func<ProcessSnapshot?> probe, Action<string> log, TimeProvider? time = null)
+        Func<ProcessSnapshot?> probe, Action<string> log, TimeProvider? time = null, Action<LiveMetrics>? observe = null)
     {
         this.writer = writer;
         this.connect = connect;
         this.probe = probe;
         this.log = log;
+        this.observe = observe;
         this.time = time ?? TimeProvider.System;
         rconDisabled = connect is null;
     }
@@ -87,7 +93,8 @@ public sealed class MetricsCollector
     /// <summary>
     /// <see cref="ServerService.RunAsync"/>의 모니터로 쓴다. 서버 폴더의 지표 DB를 열고, 서버가 끝날 때까지 수집한다.
     /// </summary>
-    public static async Task MonitorAsync(ServerRunContext context, Action<string> log, CancellationToken ct)
+    public static async Task MonitorAsync(ServerRunContext context, Action<string> log, CancellationToken ct,
+        Action<LiveMetrics>? observe = null)
     {
         var interval = TimeSpan.FromSeconds(context.Preset.MetricsIntervalSeconds);
         var store = MetricsStore.OpenForServer(context.Directory);
@@ -106,7 +113,7 @@ public sealed class MetricsCollector
 
         log($"지표 수집: {interval.TotalSeconds:0}초 간격 → {store.DatabasePath}");
         await using var writer = new MetricsWriter(store, options, log: log);
-        var collector = new MetricsCollector(writer, connect, new ProcessProbe(context.Process).Measure, log);
+        var collector = new MetricsCollector(writer, connect, new ProcessProbe(context.Process).Measure, log, observe: observe);
 
         await writer.AddAsync(new ServerEvent(DateTimeOffset.UtcNow, EventTypes.ServerStart, JsonSerializer.Serialize(new
         {
@@ -176,6 +183,17 @@ public sealed class MetricsCollector
 
         if (process is null && tick is null && players is null)
             return;
+        if (observe is not null)
+        {
+            try
+            {
+                observe(new LiveMetrics(now, tick, process, players));
+            }
+            catch (Exception ex)
+            {
+                log($"주의: 실시간 지표 표시 실패 (수집은 계속): {ex.Message}");
+            }
+        }
         writer.Add(new MetricSample(now)
         {
             Tps = tick?.Tps,

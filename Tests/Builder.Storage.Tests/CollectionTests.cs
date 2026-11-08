@@ -224,6 +224,30 @@ public class MetricsCollectorTests : StoreTestBase
     }
 
     [Fact]
+    public async Task PassesLiveValuesToObserverAndKeepsRecordingWhenItThrows()
+    {
+        var store = OpenStore();
+        session.Responses["tick query"] = TickResponse;
+        session.Responses["list"] = "There are 1 of a max of 8 players online: Alex";
+        var seen = new List<LiveMetrics>();
+        await using (var writer = Writer(store))
+        {
+            var collector = new MetricsCollector(writer, _ => Task.FromResult<IRconSession>(session),
+                () => new ProcessSnapshot(700, 3), logs.Add, time, observe: m =>
+                {
+                    seen.Add(m);
+                    throw new InvalidOperationException("창이 닫힘");
+                });
+            await collector.CollectOnceAsync(CancellationToken.None);
+        }
+
+        var live = Assert.Single(seen);
+        Assert.Equal((T0, 20.0, 700L, 8, "Alex"), (live.Timestamp, live.Tick?.Tps, live.Process?.RssMb, live.Players?.Max, live.Players?.Names.Single()));
+        Assert.Single(store.RecentSamples(10));
+        Assert.Contains(logs, l => l.StartsWith("주의: 실시간 지표 표시 실패"));
+    }
+
+    [Fact]
     public async Task WithoutRconRecordsProcessMetricsOnly()
     {
         var store = OpenStore();

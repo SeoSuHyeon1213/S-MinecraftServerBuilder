@@ -308,6 +308,49 @@ public sealed class ServerService
     public async Task<int> RunAsync(string serverDir, bool allowJavaDownload,
         Func<ServerRunContext, CancellationToken, Task>? monitor = null, CancellationToken ct = default)
     {
+        var (dir, config, resolved, psi) = await PrepareLaunchAsync(serverDir, allowJavaDownload, ct);
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException("Java 프로세스를 시작하지 못했습니다.");
+        using var monitorStop = new CancellationTokenSource();
+        var monitorTask = monitor is null
+            ? Task.CompletedTask
+            : Task.Run(() => RunMonitorAsync(monitor, new ServerRunContext(dir, config, resolved, process), monitorStop.Token));
+
+        // 취소(Ctrl+C) 시에도 서버가 월드를 저장하고 스스로 끝날 때까지 기다린다.
+        await process.WaitForExitAsync(CancellationToken.None);
+        await monitorStop.CancelAsync();
+        await monitorTask;
+        return process.ExitCode;
+    }
+
+    /// <summary>
+    /// 콘솔 창 없이 서버를 실행한다 (관리 창용). 표준 입출력을 빌더가 맡아 <paramref name="output"/>으로 서버 출력을 넘기고,
+    /// 명령 입력과 저장 후 종료(<see cref="RunningServer.StopAsync"/>)를 할 수 있다. 콘솔 창을 닫아 저장 없이 끝나는 일을 막는다.
+    /// </summary>
+    public async Task<RunningServer> StartManagedAsync(string serverDir, bool allowJavaDownload, Action<string> output,
+        Func<ServerRunContext, CancellationToken, Task>? monitor = null, CancellationToken ct = default)
+    {
+        var (dir, config, resolved, psi) = await PrepareLaunchAsync(serverDir, allowJavaDownload, ct);
+        // 리다이렉트된 표준 출력은 Java가 OS 기본 인코딩(한국어 Windows는 MS949)으로 쓰므로 UTF-8로 고정한다.
+        // Minecraft 콘솔 입력은 원래 UTF-8로 읽는다.
+        psi.ArgumentList.Insert(0, "-Dstdout.encoding=UTF-8");
+        psi.ArgumentList.Insert(1, "-Dstderr.encoding=UTF-8");
+        psi.RedirectStandardInput = true;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        psi.StandardInputEncoding = new System.Text.UTF8Encoding(false);
+        psi.StandardOutputEncoding = System.Text.Encoding.UTF8;
+        psi.StandardErrorEncoding = System.Text.Encoding.UTF8;
+        psi.CreateNoWindow = true;
+
+        var process = Process.Start(psi) ?? throw new InvalidOperationException("Java 프로세스를 시작하지 못했습니다.");
+        return RunningServer.Attach(new ServerRunContext(dir, config, resolved, process), output,
+            monitor is null ? null : (context, token) => RunMonitorAsync(monitor, context, token));
+    }
+
+    /// <summary>실행 전 확인(EULA·Java·RCON)과 안내를 하고 Java 실행 정보를 만든다.</summary>
+    private async Task<(string Dir, ServerInstanceConfig Config, ResolvedPreset Resolved, ProcessStartInfo Psi)> PrepareLaunchAsync(
+        string serverDir, bool allowJavaDownload, CancellationToken ct)
+    {
         var dir = Path.GetFullPath(serverDir);
         var config = ServerInstanceConfig.Load(dir);
         if (!EulaFile.IsAccepted(dir))
@@ -362,17 +405,7 @@ public sealed class ServerService
 
         log($"서버 시작: {ModLoaders.DisplayName(config.Loader)} {config.LoaderVersion}, " +
             $"프리셋 {resolved.Source.DisplayName}({resolved.Source.Id}), 힙 {resolved.HeapMb}MB, 모드 {modCount}개");
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException("Java 프로세스를 시작하지 못했습니다.");
-        using var monitorStop = new CancellationTokenSource();
-        var monitorTask = monitor is null
-            ? Task.CompletedTask
-            : Task.Run(() => RunMonitorAsync(monitor, new ServerRunContext(dir, config, resolved, process), monitorStop.Token));
-
-        // 취소(Ctrl+C) 시에도 서버가 월드를 저장하고 스스로 끝날 때까지 기다린다.
-        await process.WaitForExitAsync(CancellationToken.None);
-        await monitorStop.CancelAsync();
-        await monitorTask;
-        return process.ExitCode;
+        return (dir, config, resolved, psi);
     }
 
     private async Task RunMonitorAsync(Func<ServerRunContext, CancellationToken, Task> monitor, ServerRunContext context, CancellationToken ct)

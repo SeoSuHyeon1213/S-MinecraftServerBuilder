@@ -119,6 +119,7 @@ Fabric Game Server (Java)
 MinecraftHybridBuilder/
 ├── Builder.Core/        # 설정·프리셋·서버·모드 관리, 하드웨어 감지
 ├── Builder.Cli/         # Windows/Linux 실행 도구
+├── Builder.Gui/         # Windows 서버 관리 창 (WinForms): 실행·저장 후 종료·상태·접속자·콘솔. 웹 대시보드 전 단계의 로컬 관리 도구
 ├── Builder.Web/         # ASP.NET Core API + 대시보드
 ├── Builder.Storage/     # SQLite 지표 저장소 (원본 48시간, 1분 집계·이벤트 30일 기본 보존)
 ├── Builder.Worker/      # 비동기 작업 처리 (초기엔 Web 내부 BackgroundService)

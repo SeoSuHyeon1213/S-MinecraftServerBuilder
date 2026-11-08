@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- WinForms는 Windows 전용이다. Linux는 CLI(mchb start)를 쓴다. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <RootNamespace>Builder.Gui</RootNamespace>
+    <AssemblyName>mchb-gui</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Builder.Core\Builder.Core.csproj" />
+    <ProjectReference Include="..\Builder.Storage\Builder.Storage.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\Presets\*.json" Link="Presets\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\Mods\*.json" Link="Mods\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

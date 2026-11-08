@@ -11,6 +11,7 @@
 |---|---|
 | `Builder.Core/` | 하드웨어 감지, 프리셋, Java 탐색·설치(Adoptium), Fabric/Mojang 메타 API, 모드 로더 설치(`Loaders/`), 서버 생성·설정·전환·실행, 모드 설치(`Mods/`), RCON 클라이언트·설정(`Rcon/`) |
 | `Builder.Cli/` | 콘솔 실행 도구 (실행 파일 이름 `mchb`) |
+| `Builder.Gui/` | Windows 서버 관리 창 (WinForms, `net10.0-windows`, 실행 파일 이름 `mchb-gui`). 서버 실행·안전 종료·상태·접속자·콘솔 |
 | `Presets/` | 경량화 프리셋 JSON (normal / medium / low / minimum). 각 프리셋의 `mods`가 설치할 모드 목록. 빌드 시 출력 폴더로 복사됨 |
 | `Mods/catalog.json` | 최적화 모드 카탈로그 (모드 ID, 이름, 소스별 프로젝트 ID). 빌드 시 출력 폴더로 복사됨 |
 | `Builder.Storage/` | 서버 지표·이벤트 SQLite 저장소 (`MetricsStore`: 스키마·조회·1분 집계·보존 정책, `MetricsWriter`: 용량 제한 큐와 배치 기록), 지표 수집기(`Collection/`: RCON 응답 파서, `MetricsCollector`) |
@@ -24,6 +25,7 @@
 - 빌드: `dotnet build MinecraftHybridBuilder.slnx`
 - 테스트: `dotnet test MinecraftHybridBuilder.slnx`
 - CLI 실행: `dotnet run --project Builder.Cli -- <명령>` (`help`로 명령 목록 확인)
+- 관리 창 실행 (Windows): `dotnet run --project Builder.Gui -- [서버 폴더]`
 
 ## 런타임 데이터 위치
 - 빌더가 내려받은 Java 런타임: `%LOCALAPPDATA%\MinecraftHybridBuilder\runtimes\java-<버전>` (Linux: `~/.local/share/...`). 환경 변수 `MCHB_HOME`으로 변경 가능.
@@ -53,6 +55,9 @@
 - 지표 수집 주기는 프리셋 `metricsIntervalSeconds`(설계서 4장 "백그라운드 작업" 행과 일치)와 오버라이드 `metrics.intervalSeconds`(0이면 끔)로 정한다.
 - 지표 수집이 켜진 서버는 `configure`·`start` 시 server.properties에 RCON을 켠다. 사용자가 정한 `rcon.port`·`rcon.password`는 바꾸지 않고, 비밀번호가 없을 때만 무작위로 만든다. RCON 비밀번호는 server.properties에만 두고 builder.json·DB·로그에 쓰지 않는다. `broadcast-rcon-to-ops=false`로 수집 명령이 OP 채팅에 뜨지 않게 한다.
 - 서버 실행 중 모니터(`ServerService.RunAsync`의 `monitor`)는 서버가 끝나면 취소되며, 모니터 예외는 로그만 남기고 서버 실행에 영향을 주지 않는다.
+- 관리 창은 `ServerService.StartManagedAsync`(표준 입출력 리다이렉트, 콘솔 창 없음) → `RunningServer`로 서버를 다룬다. 종료는 항상 `stop` 명령으로 저장 후 끝내고, `Kill`은 사용자가 강제 종료를 고른 경우에만 쓴다. 관리 창이 비정상 종료돼도 서버 프로세스를 함께 죽이지 않는다 (저장 없는 종료보다 계속 실행이 월드에 안전).
+- 서버 콘솔 해석·명령 생성은 `ServerConsole`에 둔다. 플레이어 이름은 `IsValidPlayerName`(영문·숫자·밑줄 16자, 베드락 `.` 접두사)으로 검사하고 명령에 줄바꿈을 허용하지 않는다 (명령 끼워 넣기 방지).
+- 관리 창도 EULA에 대신 동의하지 않는다. 동의되지 않은 서버는 안내만 한다.
 
 ## 직접 수정 주의
 - 서버 폴더의 `start.bat` / `start.sh`는 `configure` 실행 시 다시 생성된다. 수정은 프리셋이나 오버라이드로 한다.
